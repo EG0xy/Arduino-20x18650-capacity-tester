@@ -242,7 +242,35 @@ void UpdateDisplay()
     lcd.setBacklight(LOW);
 
   }else if(lastBatteryActivated >= 0) // Display the last active battery for some time then reset to MAIN screen
-    lcd.setCursor(0, 0); // go to 1st char of line 2
+
+    if(m_sBatterys[lastBatteryActivated].m_State == EState::Low)
+    {
+      lcd.clear();
+      lcd.setCursor(3, 0);
+      lcd.print("Battery ");
+      lcd.setCursor(11, 0);
+      lcd.print(lastBatteryActivated + 1);
+      lcd.setCursor(3, 1);
+      lcd.print("LOW: ");
+      lcd.setCursor(8, 1);
+      lcd.print(m_sBatterys[lastBatteryActivated].m_Voltage);
+      lcd.setCursor(12, 1);
+      lcd.print("V");
+    }else if(m_sBatterys[lastBatteryActivated].m_State == EState::Finished)
+    {
+      lcd.clear();
+      lcd.setCursor(3, 0);
+      lcd.print("Battery ");
+      lcd.setCursor(11, 0);
+      lcd.print(lastBatteryActivated + 1);
+      lcd.setCursor(7, 1);
+      lcd.rightToLeft();
+      lcd.print(m_sBatterys[lastBatteryActivated].m_Capacity);
+      lcd.leftToRight();
+      lcd.setCursor(9, 1);
+      lcd.print("mAh");
+    }
+
 //   lcd.print  (m_sBatterys[19].m_Voltage);
   }else if(screenTimeOut <= 0)
   {

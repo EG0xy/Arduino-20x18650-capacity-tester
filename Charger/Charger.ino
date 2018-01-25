@@ -28,16 +28,16 @@
    D52 - Shift Register 74HC595N X 3 (SH_CP pin)
 */
 
-#define DEBUG
-
-#define SCREEN_TIMEOUT 5000
+//#define DEBUG
+#define SCREEN_REFRESH 500
+#define SCREEN_TIMEOUT 7000
 #define MAIN_SCREEN -1
 #define SCREEN_OFF -2
 
 #define BAT_COUNT 20
 #define BAT_READ_COUNT 10
 const float m_cfBatteryDischargeVoltage = 4.1;
-const float m_cfBatteryCutOffVoltage = 2.8;
+const float m_cfBatteryCutOffVoltage = 2.85;
 
 #define MUX_CH_COUNT 16
 #define MUX_S0 42
@@ -83,18 +83,19 @@ int batPins[] = {BAT_17, BAT_18, BAT_19, BAT_20};
 /*HC595*/
 const int ShiftPWM_latchPin = 45;
 const bool ShiftPWM_invertOutputs = 0;
-unsigned char maxBrightness = 255;
+unsigned char maxBrightness = 100;
 unsigned char pwmFrequency = 200; //DO NOT CHANGE pwmFrequency after calibrating pwmDuty and voltageCalibration
-const int numRegisters = 2;
+const int numRegisters = 3;
 
-short lastScreen = -1;
-short screenTimeOut = SCREEN_TIMEOUT;
+short lastScreen = MAIN_SCREEN;
+unsigned long screenTimeOut = SCREEN_TIMEOUT;
+unsigned long screenRefresh = SCREEN_REFRESH;
 
 
 
 //mesured to draw 1000 mA
 const float pwmDuty[8 * numRegisters] = {
-    0.2845,         //70,//1
+    0.2905,         //70,//1
     0.2649,         //65,//2
     0.2365,         //59,//3
     0.2620,         //65,//4
@@ -123,26 +124,26 @@ const float pwmDuty[8 * numRegisters] = {
 //readings calibrated by my multimeter
 float voltageCalibration[20]=
 {
-    0.9515,//1
-    0.9581,//2
-    0.9603,//3
-    0.9649,//4
-    0.9515,//5
-    0.9559,//6
-    0.9559,//7
-    0.9559,//8
-    0.9581,//9
-    0.9581,//10
-    0.9559,//11
-    0.9581,//12
-    0.9537,//13
-    0.9671,//14
-    0.9671,//15
-    0.9603,//16
-    0.9581,//17
-    0.9515,//18
-    0.9537,//19
-    0.9493//20
+    0.9523,//1
+    0.9539,//2
+    0.9571,//3
+    0.9566,//4
+    0.9462,//5
+    0.9504,//6
+    0.9504,//7
+    0.9507,//8
+    0.9534,//9
+    0.9533,//10
+    0.9510,//11
+    0.9534,//12
+    0.9494,//13
+    0.9607,//14
+    0.9619,//15
+    0.9540,//16
+    0.9510,//17
+    0.9481,//18
+    0.9486,//19
+    0.9443//20
 };
 
 float getVoltage(uint8_t pin) {                     //read voltage from analog pins
@@ -195,65 +196,56 @@ void UpdateState(int nBat)
     m_sBatterys[nBat].m_State = EState::Empty;
 
     lastScreen = MAIN_SCREEN;
-
-    /*
-     * When battery is pulled out from slot, next Finished or Low will be searched for.
-     */
-
-    //Go through the batterys and set next charged, or return to main screen
-    for (int i = 0; i < BAT_COUNT; ++i)
-    {
-        if(m_sBatterys[i].m_State == EState::Finished)
-        {
-          lastScreen = i;
-          screenTimeOut = SCREEN_TIMEOUT;
-          break;
-        }
-    }
-    if(lastScreen == MAIN_SCREEN)
-    {
-      //Go through the batterys and set next Low, or return to main screen
-      for (int i = 0; i < BAT_COUNT; ++i)
-      {
-          if(m_sBatterys[i].m_State == EState::Low)
-          {
-            lastScreen = i;
-            screenTimeOut = SCREEN_TIMEOUT;
-            break;
-          }
-      }
-    }
-
+    EnableLCD();
   }else if(m_sBatterys[nBat].m_State == EState::Discharging && m_sBatterys[nBat].m_Voltage <= m_cfBatteryCutOffVoltage)
   {
+#ifdef DEBUG
+    Serial.print("Finished SET");
+    Serial.println();
+#endif
     m_sBatterys[nBat].m_State = EState::Finished;
-    lastScreen = i;
-    screenTimeOut = SCREEN_TIMEOUT;
-  }else if(m_sBatterys[nBat].m_State == EState::Empty && lastScreen <= MAIN_SCREEN)
+    lastScreen = nBat;
+    EnableLCD();
+
+  }else if (lastScreen == MAIN_SCREEN && (m_sBatterys[nBat].m_State == EState::Finished || m_sBatterys[nBat].m_State == EState::Low)) //When battery is pulled out from some slot, next Finished or Low will be searched for.
   {
-    if(m_sBatterys[nBat].m_Voltage >= m_cfBatteryDischargeVoltage)
+    lastScreen = nBat;
+    EnableLCD();    
+  }else if(m_sBatterys[nBat].m_State == EState::Empty)
+  {
+    if(m_sBatterys[nBat].m_Voltage >= m_cfBatteryDischargeVoltage )//&& lastScreen <= MAIN_SCREEN)
     {
+#ifdef DEBUG
+    Serial.print("Discharge SET");
+    Serial.println();
+#endif
+      lastScreen = nBat;
       m_sBatterys[nBat].m_State = EState::Discharging;
       m_sBatterys[nBat].m_LastTime = millis();
       m_sBatterys[nBat].m_Capacity = 0.0;
-      screenTimeOut = SCREEN_TIMEOUT;
+      EnableLCD();
     }else if(m_sBatterys[nBat].m_Voltage > m_cfBatteryCutOffVoltage)
     {
+#ifdef DEBUG
+    Serial.print("Low SET");
+    Serial.println();
+#endif
       lastScreen = nBat; // to display LOW if not charged battery added, and do see its voltages when adding
 
       m_sBatterys[nBat].m_State = EState::Low;
-      screenTimeOut = SCREEN_TIMEOUT;
+      EnableLCD();
     }
   }
 }
 
+void EnableLCD()
+{
+  lcd.setBacklight(LOW);
+  screenTimeOut = millis() + SCREEN_TIMEOUT;
+}
+
 void UpdateDisplay()
 {
-  if(screenTimeOut > 0)
-  {
-    screenTimeOut -= millis();
-  }
-
   if(lastScreen == MAIN_SCREEN) // MAIN screen
   {
     lastScreen = SCREEN_OFF; // To prevent clearing screen repeatedly
@@ -261,11 +253,18 @@ void UpdateDisplay()
     lcd.setCursor(1, 0);
     lcd.print("Battery Tester");
     lcd.setBacklight(LOW);
-
-  }else if(lastScreen >= 0 && screenTimeOut > 0) // Display the last active battery for some time then reset to MAIN screen
-
+#ifdef DEBUG
+    Serial.print("main screen switch to off");
+    Serial.println();
+#endif
+  }else if(lastScreen >= 0)// && screenTimeOut > millis()) // Display the last active battery for some time then reset to MAIN screen
+  {
     if(m_sBatterys[lastScreen].m_State == EState::Low)
     {
+#ifdef DEBUG
+      Serial.print("low switch");
+      Serial.println();
+#endif    
       lcd.clear();
       lcd.setCursor(3, 0);
       lcd.print("Battery ");
@@ -284,31 +283,32 @@ void UpdateDisplay()
       lcd.print("Battery ");
       lcd.setCursor(11, 0);
       lcd.print(lastScreen + 1);
-      lcd.setCursor(7, 1);
-      lcd.rightToLeft();
+      lcd.setCursor(4, 1);
       lcd.print((int)m_sBatterys[lastScreen].m_Capacity);
-      lcd.leftToRight();
       lcd.setCursor(9, 1);
       lcd.print("mAh");
     }else if(m_sBatterys[lastScreen].m_State == EState::Discharging)
     {
+      void EnableLCD();
+#ifdef DEBUG
+      Serial.print("discharge");
+      Serial.println();
+#endif  
+      
       lcd.clear();
       lcd.setCursor(1, 0);
       lcd.print("Bat-");
-      lcd.rightToLeft();
-      lcd.setCursor(6, 0);
+      lcd.setCursor(5, 0);
       lcd.print(lastScreen + 1);
-      lcd.setCursor(11, 0);
+      lcd.setCursor(8, 0);
       lcd.print((int)m_sBatterys[lastScreen].m_Capacity);
-      lcd.leftToRight();
       lcd.setCursor(12, 0);
       lcd.print("mAh");
-      lcd.rightToLeft();
-      lcd.setCursor(4, 1);
+      lcd.setCursor(1, 1);
       lcd.print(m_sBatterys[lastScreen].m_Voltage);
       lcd.setCursor(5, 1);
       lcd.print("V");
-      lcd.setCursor(14, 1);
+      lcd.setCursor(12, 1);
       size_t passedTime = m_sBatterys[lastScreen].m_Time / 1000;// convert to seconds
       size_t seconds = passedTime % 60;
       lcd.print(seconds);
@@ -316,32 +316,35 @@ void UpdateDisplay()
       size_t minutes = (passedTime - 3600 * hours) / 60;
       if(minutes > 0 || hours > 0)
       {
-        lcd.setCursor(12, 1);
-        lcd.print(":");
         lcd.setCursor(11, 1);
+        lcd.print(":");
+        lcd.setCursor(9, 1);
         lcd.print(minutes);
       }else
       {
-        lcd.setCursor(15, 1);
+        lcd.setCursor(14, 1);
         lcd.print("s");
       }
       if(hours > 0)
       {
-        lcd.setCursor(9, 1);
-        lcd.print(":");
         lcd.setCursor(8, 1);
+        lcd.print(":");
+        lcd.setCursor(7, 1);
         lcd.print(hours);
       }
-      lcd.leftToRight();
     }
-  }else if(screenTimeOut <= 0)
+  }else if(screenTimeOut <= millis() && screenTimeOut > 0)
   {
+#ifdef DEBUG
+    Serial.print("time end");
+    Serial.println();
+#endif
+    
     lastScreen = SCREEN_OFF;
     screenTimeOut = 0;
     lcd.clear();
     lcd.setBacklight(HIGH);
   }
-  
 }
 
 void setup() {
@@ -356,7 +359,7 @@ void setup() {
     m_sBatterys[i] = Battery();
   }
 
-  screenTimeOut = SCREEN_TIMEOUT;
+  EnableLCD();
 
   lcd.begin(16, 2);
   UpdateDisplay();
@@ -405,7 +408,7 @@ void loop() {
   for (int i = 0; i < min(BAT_COUNT,8 * numRegisters); ++i )
   {
     if(m_sBatterys[i].m_State == EState::Discharging)
-      ShiftPWM.SetOne(i, (unsigned char)((float)pwmFrequency * pwmDuty[i]));
+      ShiftPWM.SetOne(i, (unsigned char)((float)maxBrightness * pwmDuty[i]));
   }
   delay(1);
   
@@ -417,24 +420,38 @@ void loop() {
     {
       UpdateCapacity(i);
     }
-
-#ifdef DEBUG
-   if(i%4 == 0) Serial.println();
-   Serial.print("State: ");
-   Serial.print((int)m_sBatterys[i].m_State);
-   Serial.print(" C: ");
-   Serial.print(m_sBatterys[i].m_Capacity);
-   Serial.print(" V: ");
-   Serial.print(m_sBatterys[i].m_Voltage);
-   Serial.print(", ");
-#endif
   }
 #ifdef DEBUG
-  Serial.println();
-  Serial.print("*******************************************************************************");
+   if(lastScreen >=0)
+   {
+     Serial.print("State: ");
+     Serial.print((int)m_sBatterys[lastScreen].m_State);
+     Serial.print(" C: ");
+     Serial.print(m_sBatterys[lastScreen].m_Capacity);
+     Serial.print(" V: ");
+     Serial.print(m_sBatterys[lastScreen].m_Voltage);
+     Serial.println();
+    }
+
+//    Serial.print("lastScreen: ");
+//    Serial.print(lastScreen);
+//    Serial.print("     time out: ");
+//    Serial.print(screenTimeOut);
+//    Serial.print("     time : ");
+//    Serial.print(millis());    
+     Serial.println();
+   
 #endif
 
-  UpdateDisplay();
+  if(screenRefresh < millis())
+    UpdateDisplay();
+    
+  if(screenTimeOut > 0 && screenRefresh < millis())
+  {
+    screenRefresh = millis() + SCREEN_REFRESH;
+  }
+
+  
 }
 
 //void timerIsr()

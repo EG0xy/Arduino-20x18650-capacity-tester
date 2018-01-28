@@ -73,7 +73,7 @@ struct Battery
   unsigned long m_LastTime;
 
 
-  Battery(): m_State(EState::Empty), m_Capacity(0.0), m_Voltage(0.0), m_Current(1000.0), m_Time(0), m_LastTime(millis()){};  
+  Battery(): m_State(EState::Empty), m_Capacity(0.0), m_Voltage(0.0), m_Current(1015.0), m_Time(0), m_LastTime(millis()){};  
 };
 
 Battery m_sBatterys[BAT_COUNT];
@@ -93,57 +93,57 @@ unsigned long screenRefresh = SCREEN_REFRESH;
 
 
 
-//mesured to draw 1000 mA
+//mesured to draw 1000 mA(in reality is 1.013-1.050)
 const float pwmDuty[8 * numRegisters] = {
-    0.2905,         //70,//1
-    0.2649,         //65,//2
-    0.2365,         //59,//3
-    0.2620,         //65,//4
-    0.2195,         //55,//5
-    0.2500,         //63,//6
-    0.2510,         //64,//7
-    0.2605,         //64,//8
-    0.2323,         //59,//9
-    0.2176,         //56,//10
-    0.2126,         //55,//11
-    0.2235,         //57,//12
-    0.2078,         //53,//13
-    0.2048,         //53,//14
-    0.2196,         //56,//15
-    0.2117,         //54,//16
-    0.2352,         //60,//17
-    0.2078,         //53,//18
-    0.2431,         //62,//19
-    0.2392,         //61,//20
-    0.0,            //0,//21 -- not used
-    0.0,            //0,//22 -- not used
-    0.0,            //0,//23 -- not used
-    0.0             //0 //24 -- not used
+  0.2296,//1
+  0.2147,//2
+  0.2024,//3
+  0.2115,//4
+  0.1971,//5
+  0.2042,//6
+  0.2060,//7
+  0.2088,//8
+  0.1995,//9
+  0.1966,//10
+  0.1912,//11
+  0.1961,//12
+  0.1951,//13
+  0.1923,//14
+  0.1990,//15
+  0.1992,//16
+  0.2044,//17
+  0.1953,//18
+  0.2082,//19
+  0.2090,//20
+  0.0,  //21 -- not used
+  0.0,  //22 -- not used
+  0.0,  //23 -- not used
+  0.0   //24 -- not used
 };
 
 //readings calibrated by my multimeter
-float voltageCalibration[20]=
+float voltageCalibration[BAT_COUNT]=
 {
-    0.9523,//1
-    0.9539,//2
-    0.9571,//3
-    0.9566,//4
-    0.9462,//5
-    0.9504,//6
-    0.9504,//7
-    0.9507,//8
-    0.9534,//9
-    0.9533,//10
-    0.9510,//11
-    0.9534,//12
-    0.9494,//13
-    0.9607,//14
-    0.9619,//15
-    0.9540,//16
-    0.9510,//17
-    0.9481,//18
-    0.9486,//19
-    0.9443//20
+    0.9957,//1
+    0.9999,//2
+    1.0007,//3
+    1.0053,//4
+    0.9893,//5
+    0.9962,//6
+    0.9937,//7
+    0.9965,//8
+    0.9994,//9
+    0.9993,//10
+    0.9943,//11
+    0.9952,//12
+    0.9952,//13
+    1.0070,//14
+    1.0083,//15
+    1.0000,//16
+    0.9994,//17
+    0.9913,//18
+    0.9943,//19
+    0.9898//20
 };
 
 float getVoltage(uint8_t pin) {                     //read voltage from analog pins
@@ -191,7 +191,7 @@ void UpdateState(int nBat)
 {
   UpdateBatteryVoltage(nBat);
   
-  if(m_sBatterys[nBat].m_State != EState::Empty && m_sBatterys[nBat].m_Voltage < m_cfBatteryCutOffVoltage - 0.2)
+  if(m_sBatterys[nBat].m_State != EState::Empty && m_sBatterys[nBat].m_Voltage < m_cfBatteryCutOffVoltage - 1.0)
   {
     m_sBatterys[nBat].m_State = EState::Empty;
 
@@ -223,6 +223,7 @@ void UpdateState(int nBat)
       m_sBatterys[nBat].m_State = EState::Discharging;
       m_sBatterys[nBat].m_LastTime = millis();
       m_sBatterys[nBat].m_Capacity = 0.0;
+      m_sBatterys[nBat].m_Time = 0;
       EnableLCD();
     }else if(m_sBatterys[nBat].m_Voltage > m_cfBatteryCutOffVoltage)
     {
@@ -284,9 +285,9 @@ void UpdateDisplay()
       lcd.setCursor(11, 0);
       lcd.print(lastScreen + 1);
       lcd.setCursor(4, 1);
-      lcd.print((int)m_sBatterys[lastScreen].m_Capacity);
-      lcd.setCursor(9, 1);
-      lcd.print("mAh");
+      lcd.print(m_sBatterys[lastScreen].m_Capacity);
+//      lcd.setCursor(9, 1);
+//      lcd.print("mAh");
     }else if(m_sBatterys[lastScreen].m_State == EState::Discharging)
     {
       void EnableLCD();
@@ -301,9 +302,9 @@ void UpdateDisplay()
       lcd.setCursor(5, 0);
       lcd.print(lastScreen + 1);
       lcd.setCursor(8, 0);
-      lcd.print((int)m_sBatterys[lastScreen].m_Capacity);
-      lcd.setCursor(12, 0);
-      lcd.print("mAh");
+      lcd.print(m_sBatterys[lastScreen].m_Capacity);
+//      lcd.setCursor(12, 0);
+//      lcd.print("mAh");
       lcd.setCursor(1, 1);
       lcd.print(m_sBatterys[lastScreen].m_Voltage);
       lcd.setCursor(5, 1);

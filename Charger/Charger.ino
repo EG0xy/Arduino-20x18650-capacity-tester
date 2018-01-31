@@ -8,8 +8,8 @@
 /* Connection
    A0 - LCD Keypad shield - 5 keys array
         ~0 - Right
-        ~130 - Down
-        ~306 - Up
+        ~130 - Up 
+        ~306 - Down
         ~479 - Left
         ~719 - Select
 
@@ -54,6 +54,16 @@ const float m_cfBatteryCutOffVoltage = 2.85;
 LiquidCrystal_I2C lcd(0x3F, 16, 2); // set the LCD address for a 16 chars and 2 line display
 CD74HC4067 mux(MUX_S0, MUX_S1, MUX_S2, MUX_S3); //Multiplexer control
 
+enum class EKeyID:int
+{
+	None = -1,
+  	Right = 0,
+  	Left,
+  	Up,
+  	Down,
+  	Select
+};
+
 enum class EState:int
 {
   Empty = 0,
@@ -68,12 +78,12 @@ struct Battery
   EState m_State;
   float m_Capacity;
   float m_Voltage;
-  float m_Current;
+//  float m_Current;
   unsigned long m_Time;
   unsigned long m_LastTime;
 
 
-  Battery(): m_State(EState::Empty), m_Capacity(0.0), m_Voltage(0.0), m_Current(1015.0), m_Time(0), m_LastTime(millis()){};  
+  Battery(): m_State(EState::Empty), m_Capacity(0.0), m_Voltage(0.0)/*, m_Current(1000.0)*/, m_Time(0), m_LastTime(millis()){};  
 };
 
 Battery m_sBatterys[BAT_COUNT];
@@ -91,6 +101,8 @@ short lastScreen = MAIN_SCREEN;
 unsigned long screenTimeOut = SCREEN_TIMEOUT;
 unsigned long screenRefresh = SCREEN_REFRESH;
 
+EKeyID activeButton = EKeyID::None;
+bool InputActive = false;
 
 
 //mesured to draw 1000 mA(in reality is 1.013-1.050)
@@ -114,7 +126,7 @@ const float pwmDuty[8 * numRegisters] = {
   0.2044,//17
   0.1953,//18
   0.2082,//19
-  0.2090,//20
+  0.1900,//20
   0.0,  //21 -- not used
   0.0,  //22 -- not used
   0.0,  //23 -- not used
@@ -144,6 +156,31 @@ float voltageCalibration[BAT_COUNT]=
     0.9913,//18
     0.9943,//19
     0.9898//20
+};
+
+//readings calibrated by my multimeter
+float currentCalibration[BAT_COUNT]=
+{
+    1073.0,//1
+    1100.0,//2
+    1072.0,//3
+    1102.0,//4
+    1024.0,//5
+    1073.0,//6
+    1069.0,//7
+    1069.0,//8
+    1025.0,//9
+    1026.0,//10
+    1027.0,//11
+    1025.0,//12
+    1028.0,//13
+    1029.0,//14
+    1028.0,//15
+    1028.0,//16
+    1065.0,//17
+    1025.0,//18
+    1058.0,//19
+    1020.0//20
 };
 
 float getVoltage(uint8_t pin) {                     //read voltage from analog pins
@@ -181,7 +218,7 @@ void UpdateBatteryVoltage(int nBat)// index from 1
 void UpdateCapacity(int nBat)
 {
     unsigned long nDeltaTime = millis() - m_sBatterys[nBat].m_LastTime;
-    m_sBatterys[nBat].m_Capacity += (m_sBatterys[nBat].m_Current * (float)nDeltaTime) / 3600000.0; //A*deltaTime/1hour
+    m_sBatterys[nBat].m_Capacity += (currentCalibration[nBat] * (float)nDeltaTime) / 3600000.0; //A*deltaTime/1hour
     m_sBatterys[nBat].m_LastTime = millis();
 
     m_sBatterys[nBat].m_Time += nDeltaTime;
@@ -245,6 +282,171 @@ void EnableLCD()
   screenTimeOut = millis() + SCREEN_TIMEOUT;
 }
 
+int PrioritySelect(int step,int nLast)
+{
+	int result = nLast;
+	if(result < 0)
+		result = 0;
+
+	int nCount = 0;
+	bool bFound = false;
+	EState searchState = EState::Finished;
+
+#ifdef DEBUG
+    Serial.print("Entering Priority Selecttion loop");
+    Serial.println();
+#endif
+	do{
+		nCount += 1;
+
+		result = result + step;
+
+		//checking search bounds
+		if (result < 0)
+		{
+			result = BAT_COUNT - 1;
+		}else if ( result >= BAT_COUNT)
+		{
+			result = 0;
+		}
+
+		if(m_sBatterys[result].m_State == searchState)
+		{
+			bFound = true;
+		}
+
+		if(!bFound && nCount == BAT_COUNT && searchState == EState::Finished)
+		{
+#ifdef DEBUG
+    Serial.print("Priority Selecttion loop: switch to Discharging");
+    Serial.println();
+#endif
+			searchState = EState::Discharging;
+			nCount = 0;
+		}
+
+	}while(!bFound && nCount <= BAT_COUNT);
+
+  if(!bFound)
+    result = MAIN_SCREEN;
+
+#ifdef DEBUG
+    Serial.print("Priority Selecttion loop: returning ");
+    Serial.print(result);
+    Serial.println();
+#endif
+
+	return result;
+}
+
+void UpdateInput()
+{
+	int readkey = analogRead(0);
+
+#ifdef DEBUG
+    Serial.print("Read Value: ");
+    Serial.print(readkey);
+    Serial.println();
+#endif
+
+	if(activeButton == EKeyID::None)
+	{
+		// if(readkey<30) {
+		// 	activeButton = EKeyID::Right;
+		// }
+		if(readkey>= 30 && readkey<160) {
+			activeButton = EKeyID::Up;
+		}
+		if(readkey>= 160 && readkey<330) {
+			activeButton = EKeyID::Down;
+		}
+		// if(readkey>= 330 && readkey<500) {
+		// 	activeButton = EKeyID::Left;
+		// }
+		// if(readkey>= 500 && readkey<740) {
+		// 	activeButton = EKeyID::Select;
+		// }
+
+	}else if(readkey>= 740) {
+      InputActive = false;
+			activeButton = EKeyID::None;
+#ifdef DEBUG
+    Serial.print("All released");
+    Serial.println();
+#endif
+	}
+
+	if(activeButton != EKeyID::None)
+	{
+		EnableLCD();
+		if(lastScreen < 0)
+		{
+      		InputActive = true;
+			lastScreen = PrioritySelect(1,lastScreen);
+			return;
+		}
+	}
+
+  	if(!InputActive)
+  	{
+		switch(activeButton)
+		{
+			case EKeyID::Right:
+			{
+    			InputActive = true;
+#ifdef DEBUG
+    Serial.print("RIGHT");
+    Serial.println();
+#endif
+				break;
+			}
+			case EKeyID::Left:
+			{
+      			InputActive = true;
+#ifdef DEBUG
+    Serial.print("LEFT");
+    Serial.println();
+#endif
+				break;
+			}
+			case EKeyID::Up:
+			{
+      			InputActive = true;
+#ifdef DEBUG
+    Serial.print("UP");
+    Serial.println();
+#endif
+				lastScreen = PrioritySelect(1,lastScreen);
+				break;
+			}
+			case EKeyID::Down:
+			{
+      			InputActive = true;
+#ifdef DEBUG
+    Serial.print("DOWN");
+    Serial.println();
+#endif
+				lastScreen = PrioritySelect(-1,lastScreen);
+				break;
+			}
+			case EKeyID::Select:
+			{
+      			InputActive = true;
+#ifdef DEBUG
+    Serial.print("SELECT");
+    Serial.println();
+#endif
+				break;
+			}
+			default:
+			{
+			}
+		
+		};
+  	}
+
+}
+
 void UpdateDisplay()
 {
   if(lastScreen == MAIN_SCREEN) // MAIN screen
@@ -258,7 +460,7 @@ void UpdateDisplay()
     Serial.print("main screen switch to off");
     Serial.println();
 #endif
-  }else if(lastScreen >= 0)// && screenTimeOut > millis()) // Display the last active battery for some time then reset to MAIN screen
+  }else if(lastScreen >= 0 && screenTimeOut > millis()) // Display the last active battery for some time then reset to MAIN screen
   {
     if(m_sBatterys[lastScreen].m_State == EState::Low)
     {
@@ -333,6 +535,20 @@ void UpdateDisplay()
         lcd.setCursor(7, 1);
         lcd.print(hours);
       }
+    }else if(m_sBatterys[lastScreen].m_State == EState::Empty)
+    {
+    	void EnableLCD();
+#ifdef DEBUG
+      Serial.print("empty");
+      Serial.println();
+#endif  
+      lcd.clear();
+      lcd.setCursor(3, 0);
+      lcd.print("Battery ");
+      lcd.setCursor(11, 0);
+      lcd.print(lastScreen + 1);
+      lcd.setCursor(1, 1);
+      lcd.print("Empty  Slot!");
     }
   }else if(screenTimeOut <= millis() && screenTimeOut > 0)
   {
@@ -340,7 +556,6 @@ void UpdateDisplay()
     Serial.print("time end");
     Serial.println();
 #endif
-    
     lastScreen = SCREEN_OFF;
     screenTimeOut = 0;
     lcd.clear();
@@ -444,6 +659,7 @@ void loop() {
    
 #endif
 
+  	UpdateInput();
   if(screenRefresh < millis())
     UpdateDisplay();
     

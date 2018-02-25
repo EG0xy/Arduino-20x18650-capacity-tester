@@ -26,6 +26,8 @@
    D45 - Shift Register 74HC595N X 3 (ST_CP pin)
    D51 - Shift Register 74HC595N X 3 (DS pin MOSI)
    D52 - Shift Register 74HC595N X 3 (SH_CP pin)
+
+   81.85931902590525 - 0.11406781021018966x + 0.00007701200364055409x2 - 2.666253770521e-8x3 + 3.54777456e-12x4 - formula for % diff from OPUS
 */
 
 //#define DEBUG
@@ -75,15 +77,15 @@ enum class EState:int
 
 struct Battery
 {
-  EState m_State;
-  float m_Capacity;
-  float m_Voltage;
-//  float m_Current;
-  unsigned long m_Time;
-  unsigned long m_LastTime;
+	EState m_State;
+	float m_Capacity;
+	float m_Voltage;
+	float m_Resistance;
+	unsigned long m_Time;
+	unsigned long m_LastTime;
+	bool m_ResetPWM;
 
-
-  Battery(): m_State(EState::Empty), m_Capacity(0.0), m_Voltage(0.0)/*, m_Current(1000.0)*/, m_Time(0), m_LastTime(millis()){};  
+	Battery(): m_State(EState::Empty), m_Capacity(0.0), m_Voltage(0.0)/*, m_Current(1000.0)*/, m_Time(0), m_LastTime(millis()),m_ResetPWM(false){};  
 };
 
 Battery m_sBatterys[BAT_COUNT];
@@ -305,6 +307,7 @@ void UpdateState(int nBat)
     Serial.println();
 #endif
     m_sBatterys[nBat].m_State = EState::Finished;
+	m_sBatterys[nBat].m_ResetPWM = true;
 
     ResetLastInfo();
     lastScreen = nBat;
@@ -329,6 +332,7 @@ void UpdateState(int nBat)
       m_sBatterys[nBat].m_LastTime = millis();
       m_sBatterys[nBat].m_Capacity = 0.0;
       m_sBatterys[nBat].m_Time = 0;
+      m_sBatterys[nBat].m_ResetPWM = true;
       EnableLCD();
     }else if(m_sBatterys[nBat].m_Voltage > m_cfBatteryCutOffVoltage)
     {
@@ -612,10 +616,10 @@ void UpdateDisplay()
       }
     }else if(m_sBatterys[lastScreen].m_State == EState::Empty)
     {
-    	void EnableLCD();
+    	EnableLCD();
 #ifdef DEBUG
-      Serial.print("empty");
-      Serial.println();
+      	Serial.print("empty");
+      	Serial.println();
 #endif  
       lcd.clear();
       lcd.setCursor(3, 0);
@@ -695,11 +699,21 @@ void setup() {
 
 void loop() {
 
-  ShiftPWM.SetAll(0);
+  // ShiftPWM.SetAll(0);
   for (int i = 0; i < min(BAT_COUNT,8 * numRegisters); ++i )
   {
-    if(m_sBatterys[i].m_State == EState::Discharging)
-      ShiftPWM.SetOne(i, (unsigned char)pwmDuty[i]);
+	if(m_sBatterys[i].m_ResetPWM)
+	{
+		if(m_sBatterys[i].m_State == EState::Discharging)
+		{
+		  	ShiftPWM.SetOne(i, (unsigned char)pwmDuty[i]);
+		}
+		else
+		{
+			ShiftPWM.SetOne(i, 0);
+		}
+		m_sBatterys[i].m_ResetPWM = false;	
+	}
   }
   delay(1);
   
@@ -731,7 +745,7 @@ void loop() {
 //    Serial.print("     time : ");
 //    Serial.print(millis());    
      Serial.println();
-   
+   	ShiftPWM.PrintInterruptLoad();
 #endif
 
   	UpdateInput();

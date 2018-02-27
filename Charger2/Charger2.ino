@@ -161,18 +161,22 @@ void UpdateCapacity(float current,int batID)
 }
 
 void SetPWM(float current, int batID) {
-	bool bChanged = false;
-	if (current < batteries[batID].dischargeCurrent && batteries[batID].pwm < MAX_PWM) {//for 8bit=255, for 16bit=65535
-		batteries[batID].pwm += 1;
-		bChanged = true;
-	}
-	else if (current > batteries[batID].dischargeCurrent && batteries[batID].pwm > 0) {
-		batteries[batID].pwm -= 1;
-		bChanged = true;
-	}
+  if(current != batteries[batID].dischargeCurrent)
+  {
+    //for faster current equality
+    int currentDiff = batteries[batID].dischargeCurrent - current;
+    int pwmChange = map((int)(abs(currentDiff) *  0.2f),0,2000,0 MAX_PWM); 
 
-	if(bChanged)
-		pwmDriver[batteries[batID].pwmPinsData.id].setPWM(batteries[batID].pwmPinsData.chanel, 0, batteries[batID].pwm);
+    if(currentDiff > 0 && batteries[batID].pwm < MAX_PWM)
+    {
+      batteries[batID].pwm += max(pwmChange, 1);
+    }else if(currentDiff < 0 && batteries[batID].pwm > 0)
+    {
+      batteries[batID].pwm -= max(pwmChange, 1);
+    }
+
+     pwmDriver[batteries[batID].pwmPinsData.id].setPWM(batteries[batID].pwmPinsData.chanel, 0, batteries[batID].pwm);
+  }
 }
 
 void Update(int batid)
@@ -209,7 +213,7 @@ void setup() {
 	{
 		batteries[i] = Batterie();
 
-		batteries[i].pwm = 4000;
+		batteries[i].pwm = 1000;
 
 		if (muxCH_BVNum >= MUX_CH_COUNT)
 		{
@@ -236,7 +240,7 @@ void setup() {
 		}
 
 		batteries[i].pwmPinsData.chanel = pwmCHNum++;
-		batteries[i].ressistorReadPinsData.id = pwmPICNum;
+		batteries[i].pwmPinsData.id = pwmPICNum;
 	}
 
 	lcd.setBacklight(LOW);

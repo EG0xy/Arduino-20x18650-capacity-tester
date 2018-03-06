@@ -65,27 +65,54 @@
 
 #define PWM_OFF 0
 #define PWM_CHARGE 0
-#define PWM_ON	750 //~1000mA
+#define PWM_ON 1547 //~1000mA
+#define PWM_I_1 399 // ~250.38mA
+#define PWM_I_2 1547 // ~1000.49mA
 
 //Button input
 #define INPUT_PIN A0
 
-#define RESISTANCE_TIMER 2000 //waits for millliseconds until another mesurement for resistance calculation
+#define RESISTANCE_TIMER 1500 //waits for millliseconds until another mesurement for resistance calculation
+
+#define RESISTANCE_MULTIPLIER 0.01056421f //1000mA mesured
 
 #define BAT_COUNT 20
 #define BAT_READ_COUNT 10
-const float m_cfBatteryDischargeVoltage = 4.f;//V
-const float m_cfBatteryCutOffVoltage = 2.85f;//V
+const float m_cfBatteryDischargeVoltage = 2.9f;//V
+const float m_cfBatteryCutOffVoltage = 2.8f;//V
 const float m_cfRechargeVoltage = 3.75f;//V
 const float m_cfPreDischargeVoltage = 3.8f;//V
 const float m_cfDischargeCurrent = 1000.f;//mA
 static int currentMUX = 0;
 
+enum class EKeyID :int
+{
+	None = -1,
+	Right = 0,
+	Left,
+	Up,
+	Down,
+	Select
+};
+
+EKeyID activeButton = EKeyID::None;
+bool InputActive = false;
+
+#define LCD_ON -1
+#define LCD_OFF -2
+
+#define LCD_TIMEOUT 7000
+
+short lastScreen = LCD_ON;
+unsigned long lcdTimeOut = LCD_TIMEOUT;
+unsigned long batteryLastInfoTimer = 0;
+bool bLastInfoTrigered = false;
+
 LiquidCrystal_I2C lcd(0x3F, 16, 2); // set the LCD address for a 16 chars and 2 line display
-//Multiplexer control
+									//Multiplexer control
 CD74HC4067 mux(MUX_S0, MUX_S1, MUX_S2, MUX_S3);
 
-Adafruit_PWMServoDriver pwmDriver[PWM_DRIVER_COUNT] = {Adafruit_PWMServoDriver(0x40),Adafruit_PWMServoDriver(0x41)};
+Adafruit_PWMServoDriver pwmDriver[PWM_DRIVER_COUNT] = { Adafruit_PWMServoDriver(0x40),Adafruit_PWMServoDriver(0x41) };
 
 enum class EBatteryState :int
 {
@@ -107,14 +134,16 @@ struct Data
 	int chanel;
 	int id;
 
-	Data() :chanel(0), id(0){};
+	Data() :chanel(0), id(0) {};
 };
 
 struct ResistanceData {
-	float initVoltage;
+	float voltages[2] = { 0.f,0.f };
+	float currents[2] = { 0.f,0.f };
 	unsigned long timer;
+	byte currentMesurement;
 
-	ResistanceData() :initVoltage(0.f), timer(0) {};
+	ResistanceData() :timer(0), currentMesurement(0) {};
 };
 
 struct Batterie
@@ -132,10 +161,14 @@ struct Batterie
 	float dischargeCurrent; //this is for if you need to set seperate discharge rates on slots
 	unsigned long lasTime;
 
-	Batterie() :state(EBatteryState::Empty), pwm(0), capacity(0.f), resistance(0.f), voltage(0.f), loadVoltage(0.f), dischargeCurrent(m_cfDischargeCurrent), lasTime(0) {};
+	Batterie() :state(EBatteryState::Empty), pwm(PWM_OFF), capacity(0.f), resistance(0.f), voltage(0.f), loadVoltage(0.f), dischargeCurrent(m_cfDischargeCurrent), lasTime(0) {};
 	void Reset()
 	{
-		resistanceData.initVoltage = 0.f;
+		resistanceData.voltages[0] = 0.f;
+		resistanceData.voltages[1] = 0.f;
+		resistanceData.currents[0] = 0.f;
+		resistanceData.currents[1] = 0.f;
+		resistanceData.currentMesurement = 0;
 		resistanceData.timer = 0;
 		state = EBatteryState::Empty;
 		pwm = PWM_OFF;
@@ -148,6 +181,30 @@ struct Batterie
 };
 
 Batterie batteries[BAT_COUNT];
+
+float voltageReadCalibration[BAT_COUNT] =
+{	
+	0.01991374f,
+	0.01728894f,
+	0.0145641444f,
+	0.0091367661f,
+	0.0262232668f,
+	0.0202853987f,
+	0.0205658379f,
+	0.0202965867f,
+	0.017290452f,
+	0.0178396008f,
+	0.0205772194f,
+	0.0153635926f,
+	0.020852474f,
+	0.0085018169f,
+	0.0070967872f,
+	0.016547677f,
+	0.0179664988f,
+	0.0233406144f,
+	0.0233406144f,
+	0.0255810778f
+};
 
 //read voltage from analog pins
 float getVoltage(const Data& pinData, float voltageMultiplierValue = 1.0) {
@@ -168,21 +225,23 @@ float getVoltage(const Data& pinData, float voltageMultiplierValue = 1.0) {
 	sample = sample / (float)BAT_READ_COUNT;
 
 	//voltage is read from voltage divider so multiplication by 2 is necesary
-	return (float)sample * voltageMultiplierValue * ((readVcc() * 0.001f) / 1023.0);
+	return (float)sample * voltageMultiplierValue * ((readVcc() * 0.001f) / 1024.0);
 }
 void UpdateBatteries()
 {
 	//load voltage and batterie voltage reads in separate loops in order to minimize the multiplexer switching
 	for (int i = 0; i < BAT_COUNT; ++i)
 	{
-		batteries[i].voltage = getVoltage(batteries[i].batterieReadPinsData, 2.f * 0.97f);
+		batteries[i].voltage = getVoltage(batteries[i].batterieReadPinsData, 2.f);
+		batteries[i].voltage -= batteries[i].voltage * voltageReadCalibration[i];
 	}
 	for (int i = 0; i < BAT_COUNT; ++i)
 	{
-		batteries[i].loadVoltage = getVoltage(batteries[i].ressistorReadPinsData);// , 1.006f);
+		batteries[i].loadVoltage = getVoltage(batteries[i].ressistorReadPinsData);
+		batteries[i].loadVoltage += batteries[i].loadVoltage * RESISTANCE_MULTIPLIER;
 	}
 }
-void UpdateCapacity(float current,int batID)
+void UpdateCapacity(float current, int batID)
 {
 	unsigned long nDeltaTime = millis() - batteries[batID].lasTime;
 	batteries[batID].capacity += current * (float)nDeltaTime / 3600000.f;
@@ -190,27 +249,33 @@ void UpdateCapacity(float current,int batID)
 }
 
 void SetPWM(float current, int batID) {
-  if(current > 0 && current != batteries[batID].dischargeCurrent)
-  {
-    //for faster current equality
-    int currentDiff = batteries[batID].dischargeCurrent - current;
-	int pwmChange = map((int)(abs(currentDiff) *  0.2f), 0, 2000, 0, MAX_PWM);
+	if (current > 0 && current != batteries[batID].dischargeCurrent)
+	{
+		int newPwm = batteries[batID].pwm;
+		//for faster current equality
+		int currentDiff = batteries[batID].dischargeCurrent - current;
+		int pwmChange = map((int)(abs(currentDiff) *  0.2f), 0, 2000, 0, MAX_PWM);
 
-    if(currentDiff > 0 && batteries[batID].pwm < MAX_PWM)
-    {
-      batteries[batID].pwm += max(pwmChange, 1);
-    }else if(currentDiff < 0 && batteries[batID].pwm > 0)
-    {
-      batteries[batID].pwm -= max(pwmChange, 1);
-    }
+		if (currentDiff > 0 && newPwm < MAX_PWM)
+		{
+			newPwm += max(pwmChange, 1);
+		}
+		else if (currentDiff < 0 && newPwm > 0)
+		{
+			newPwm -= max(pwmChange, 1);
+		}
 
-	if (batteries[batID].pwm > MAX_PWM)
-		batteries[batID].pwm = MAX_PWM;
-	if (batteries[batID].pwm < PWM_OFF)
-		batteries[batID].pwm = PWM_OFF;
+		if (newPwm > MAX_PWM)
+			newPwm = MAX_PWM;
+		if (newPwm < PWM_OFF)
+			newPwm = PWM_OFF;
 
-     pwmDriver[batteries[batID].pwmPinsData.id].setPWM(batteries[batID].pwmPinsData.chanel, 0, batteries[batID].pwm);
-  }
+		if (batteries[batID].pwm != newPwm)
+		{
+			batteries[batID].pwm = newPwm;
+			pwmDriver[batteries[batID].pwmPinsData.id].setPWM(batteries[batID].pwmPinsData.chanel, 0, batteries[batID].pwm);
+		}
+	}
 }
 
 long readVcc() {
@@ -248,14 +313,23 @@ long readVcc() {
 	return result; // Vcc in millivolts
 }
 
+byte omega[8] = {
+	B00000,
+	B01110,
+	B10001,
+	B10001,
+	B10001,
+	B01010,
+	B11011,
+	B00000
+};
+
 void setup() {
 	Wire.begin();
 	Serial.begin(9600);
+	lcd.createChar(0, omega);
 	lcd.begin(16, 2);
-	lcd.setBacklight(LOW);
-	lcd.clear();
-	lcd.setCursor(0, 0);
-	lcd.printstr("Hello");
+	UpdateDisplay();
 
 	//*********************** Multiplexer HC4067 setup
 	pinMode(MUX_1_SIG, INPUT);
@@ -336,7 +410,12 @@ void setup() {
 		}
 
 		batteries[i].pwmPinsData.chanel = pwmCHNum++;
+		
 		batteries[i].pwmPinsData.id = pwmPICNum;
+
+		//if(pwmCHNum == 9 || pwmCHNum == 10 || pwmCHNum == 11 || pwmCHNum == 12)
+		//	batteries[i].pwmPinsData.id = pwmPICNum + 1;
+
 
 		batteries[i].pwm = PWM_OFF;
 		pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
@@ -346,6 +425,8 @@ void setup() {
 void loop() {
 	UpdateBatteries();
 	UpdateState();
+	//UpdateInput();
+	//UpdateDisplay();
 }
 
 void UpdateState()
@@ -367,223 +448,561 @@ void UpdateState()
 
 		switch (batteries[i].state)
 		{
-			case EBatteryState::Empty:
+		case EBatteryState::Empty:
+		{
+			if (batteries[i].voltage >= m_cfBatteryDischargeVoltage)
 			{
-				if (batteries[i].voltage >= m_cfBatteryDischargeVoltage)
+				batteries[i].state = EBatteryState::PreDischarge;
+			}
+			else if (batteries[i].voltage <= m_cfBatteryCutOffVoltage)
+			{
+				break;
+			}
+			else {
+				batteries[i].state = EBatteryState::Low;
+				if (lastScreen <= LCD_ON)
 				{
-					batteries[i].state = EBatteryState::PreDischarge;
-				}
-				else if (batteries[i].voltage <= m_cfBatteryCutOffVoltage)
-				{
-					break;
-				}
-				else {
-					batteries[i].state = EBatteryState::Low;
+					EnableLCD();
+					lastScreen = i;
 				}
 			}
-			case EBatteryState::Low:
-			{
-				if (batteries[i].state == EBatteryState::Low)
-				{
-#ifdef USE_SERIAL
-					Serial.print("Batterie : ");
-					Serial.print(i + 1);
-					Serial.print(" LOW: ");
-					Serial.print(batteries[i].voltage);
-					Serial.print(" V");
-					Serial.print(" Load: ");
-					Serial.print(batteries[i].loadVoltage);
-					Serial.print(" V");
-					Serial.print(" PWM: ");
-					Serial.print(batteries[i].pwm);
-					Serial.println();
-#endif
-					break;
-				}
-			}
-			case EBatteryState::PreDischarge:
+		}
+		case EBatteryState::Low:
+		{
+			if (batteries[i].state == EBatteryState::Low)
 			{
 #ifdef USE_SERIAL
 				Serial.print("Batterie : ");
 				Serial.print(i + 1);
-				Serial.print(" PREDISCHARGING");
+				Serial.print(" LOW: ");
+				Serial.print(batteries[i].voltage);
+				Serial.print(" V");
+				Serial.print(" Load: ");
+				Serial.print(batteries[i].loadVoltage);
+				Serial.print(" V");
+				Serial.print(" PWM: ");
+				Serial.print(batteries[i].pwm);
 				Serial.println();
+#endif
+				break;
+			}
+		}
+		case EBatteryState::PreDischarge:
+		{
+#ifdef USE_SERIAL
+			Serial.print("Batterie : ");
+			Serial.print(i + 1);
+			Serial.print(" PREDISCHARGING");
+			Serial.println();
 #endif
 #ifndef DISABLE_CHARGING
 
-				if (batteries[i].pwm == PWM_OFF)
+			if (batteries[i].pwm == PWM_OFF)
+			{
+				batteries[i].pwm = PWM_ON;
+				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+				break;
+			}
+			else if (batteries[i].voltage < m_cfPreDischargeVoltage)
+			{
+				batteries[i].pwm = PWM_OFF;
+				batteries[i].state = EBatteryState::Charging;
+			}
+			else
+			{
+				break;
+			}
+#else
+			batteries[i].state = EBatteryState::Charging;
+#endif
+
+		}
+		case EBatteryState::Charging:
+		{
+#ifdef USE_SERIAL
+			Serial.print("Batterie : ");
+			Serial.print(i + 1);
+			Serial.print(" CHARGING");
+			Serial.println();
+#endif
+#ifndef DISABLE_CHARGING
+
+			if (batteries[i].pwm == PWM_OFF)
+			{
+				batteries[i].pwm = PWM_CHARGE;
+				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+			}
+			else if (true)//TODO: ADD triger for charged completed (STDBY pin on TP4056)
+			{
+				batteries[i].pwm = PWM_OFF;
+				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+				batteries[i].state = EBatteryState::Resistance;
+			}
+
+			break;
+
+#else
+			batteries[i].state = EBatteryState::Resistance;
+#endif
+		}
+		case EBatteryState::Resistance:
+		{
+			if (batteries[i].resistanceData.timer == 0)
+			{
+				batteries[i].resistanceData.timer = millis() + RESISTANCE_TIMER;
+				if (lastScreen <= LCD_ON)
 				{
-					batteries[i].pwm = PWM_ON;
-					pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
-					break;
+					EnableLCD();
+					lastScreen = i;
 				}
-				else if (batteries[i].voltage < m_cfPreDischargeVoltage)
+				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, PWM_I_1);
+#ifdef USE_SERIAL
+				Serial.print("Batterie : ");
+				Serial.print(i + 1);
+				Serial.print(" INIT resistance timer");
+				Serial.print(" --- VCC : ");
+				Serial.print(readVcc() * 0.001f);
+				Serial.println();
+#endif
+			}
+			else if (batteries[i].resistance == 0.0 && batteries[i].resistanceData.timer <= millis())
+			{
+				batteries[i].resistanceData.voltages[batteries[i].resistanceData.currentMesurement] = batteries[i].voltage;
+				batteries[i].resistanceData.currents[batteries[i].resistanceData.currentMesurement] = batteries[i].loadVoltage;
+
+				++batteries[i].resistanceData.currentMesurement;
+
+				if (batteries[i].resistanceData.currentMesurement >= 2)
 				{
-					batteries[i].pwm = PWM_OFF;
-					batteries[i].state = EBatteryState::Charging;
+					//IEC 61960-2003
+					batteries[i].resistance = 1000.f * fabsf(batteries[i].resistanceData.voltages[1] - batteries[i].resistanceData.voltages[0]) / fabsf(batteries[i].resistanceData.currents[1] - batteries[i].resistanceData.currents[0]);
+
+#ifdef USE_SERIAL
+					Serial.print("Batterie : ");
+					Serial.print(i + 1);
+					Serial.print(" resistance : ");
+					Serial.print(batteries[i].resistance);
+					Serial.print(" mOhm (IEC 61960-2003)");
+					Serial.println();
+					Serial.print("  V-1 : ");
+					Serial.print(batteries[i].resistanceData.voltages[0]);
+					Serial.print("  I-1 : ");
+					Serial.print(batteries[i].resistanceData.currents[0]);
+					Serial.println();
+					Serial.print("  V-2 : ");
+					Serial.print(batteries[i].resistanceData.voltages[1]);
+					Serial.print("  I-2 : ");
+					Serial.print(batteries[i].resistanceData.currents[1]);
+					Serial.println();
+#endif
 				}
 				else
 				{
-					break;
+					batteries[i].resistanceData.timer = millis() + RESISTANCE_TIMER;
+					pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, PWM_I_2);
 				}
-#else
-				batteries[i].state = EBatteryState::Charging;
-#endif
-				
 			}
-			case EBatteryState::Charging:
+
+			batteries[i].state = EBatteryState::Discharging;
+		}
+		case EBatteryState::Discharging:
+		{
+			if (batteries[i].voltage <= m_cfBatteryCutOffVoltage)
 			{
 #ifdef USE_SERIAL
 				Serial.print("Batterie : ");
 				Serial.print(i + 1);
-				Serial.print(" CHARGING");
+				Serial.print(" DISCHARGE completed");
 				Serial.println();
 #endif
+				batteries[i].pwm = PWM_OFF;
+				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+				batteries[i].state = EBatteryState::Recharging;
+#ifdef DISABLE_CHARGING
+				//remove when chargers working
+				batteries[i].voltage = m_cfRechargeVoltage;
+#endif
+			}
+			else
+			{
+				if (batteries[i].pwm == PWM_CHARGE || batteries[i].pwm == PWM_OFF)
+				{
+					batteries[i].pwm = PWM_ON;
+					batteries[i].lasTime = millis();
+					if (batteries[i].resistanceData.currentMesurement >= 2)//Do not change PWM while resistance test running
+						pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+					batteries[i].state = EBatteryState::Discharging;
+					break;
+				}
+
+				if (batteries[i].resistanceData.currentMesurement < 2 && batteries[i].resistanceData.timer <= millis())
+				{
+					batteries[i].state = EBatteryState::Resistance;
+				}
+
+				UpdateCapacity(batteries[i].loadVoltage * 1000.f, i);
+				if(batteries[i].resistanceData.currentMesurement >=2)//Do not change PWM while resistance test running
+					SetPWM(batteries[i].loadVoltage * 1000.f, i);
+#ifdef USE_SERIAL
+				Serial.print("Batterie : ");
+				Serial.print(i + 1);
+				Serial.print(" Capacity: ");
+				Serial.print(batteries[i].capacity);
+				Serial.print(" --- V : ");
+				Serial.print(batteries[i].voltage*1000.f);
+				Serial.print(" --- A : ");
+				Serial.print(batteries[i].loadVoltage*1000.f);
+				Serial.print(" --- PWM : ");
+				Serial.print(batteries[i].pwm);
+				Serial.println();
+#endif
+			}
+
+			break;
+		}
+		case EBatteryState::Recharging:
+		{
 #ifndef DISABLE_CHARGING
+			if (batteries[i].voltage >= m_cfRechargeVoltage)
+			{
+				batteries[i].pwm = PWM_OFF;
+				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+				batteries[i].state = EBatteryState::Finished;
+			}
+			else
+			{
 
 				if (batteries[i].pwm == PWM_OFF)
 				{
 					batteries[i].pwm = PWM_CHARGE;
 					pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
 				}
-				else if (true)//TODO: ADD triger for charged completed (STDBY pin on TP4056)
-				{
-					batteries[i].pwm = PWM_OFF;
-					pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
-					batteries[i].state = EBatteryState::Resistance;
-				}
-				
-				break;
-				
-#else
-				batteries[i].state = EBatteryState::Resistance;
-#endif
-			}
-			case EBatteryState::Resistance:
-			{
-				if (batteries[i].resistanceData.timer == 0)
-				{
 
-					batteries[i].resistanceData.initVoltage = batteries[i].voltage;
-					batteries[i].resistanceData.timer = millis() + RESISTANCE_TIMER;
-#ifdef USE_SERIAL
-					Serial.print("Batterie : ");
-					Serial.print(i + 1);
-					Serial.print(" INIT voltage: ");
-					Serial.print(batteries[i].voltage);
-					Serial.print(" INIT resistance timer");
-					Serial.println();
-#endif
-				}else if (batteries[i].resistance == 0.0 && batteries[i].resistanceData.timer <= millis())
-				{
-					float vDiff = batteries[i].resistanceData.initVoltage - batteries[i].voltage;
-					batteries[i].resistance = vDiff * 1000.f / batteries[i].loadVoltage; // result in miliohms
-#ifdef USE_SERIAL
-					Serial.print("Batterie : ");
-					Serial.print(i+1);
-					Serial.print(" resistance : ");
-					Serial.print(batteries[i].resistance);
-					Serial.print(" mOhm");
-					Serial.print(" init V : ");
-					Serial.print(batteries[i].resistanceData.initVoltage);
-					Serial.print(" load V : ");
-					Serial.print(batteries[i].voltage);
-					Serial.print(" current A : ");
-					Serial.print(batteries[i].loadVoltage);
-					Serial.println();
-#endif
-				}
-
-				batteries[i].state = EBatteryState::Discharging;
-			}
-			case EBatteryState::Discharging:
-			{
-				if (batteries[i].voltage <= m_cfBatteryCutOffVoltage)
-				{
-#ifdef USE_SERIAL
-					Serial.print("Batterie : ");
-					Serial.print(i + 1);
-					Serial.print(" DISCHARGE completed");
-					Serial.println();
-#endif
-					batteries[i].pwm = PWM_OFF;
-					pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
-					batteries[i].state = EBatteryState::Recharging;
-#ifdef DISABLE_CHARGING
-					//remove when chargers working
-					batteries[i].voltage = m_cfRechargeVoltage;
-#endif
-				}
-				else
-				{
-					if (batteries[i].pwm == PWM_CHARGE || batteries[i].pwm == PWM_OFF)
-					{
-						batteries[i].pwm = PWM_ON;
-						batteries[i].lasTime = millis();
-						pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
-						batteries[i].state = EBatteryState::Discharging;
-						break;
-					}
-
-					if (batteries[i].resistance == 0.0 && batteries[i].resistanceData.timer <= millis())
-					{
-						batteries[i].state = EBatteryState::Resistance;
-					}
-
-					UpdateCapacity(batteries[i].loadVoltage * 1000.f, i);
-					SetPWM(batteries[i].loadVoltage * 1000.f, i);
-#ifdef USE_SERIAL
-					Serial.print("Batterie : ");
-					Serial.print(i + 1);
-					Serial.print(" Capacity: ");
-					Serial.print(batteries[i].capacity);
-					Serial.println();
-#endif
-				}
-
-				break;
-			}
-			case EBatteryState::Recharging:
-			{
-#ifndef DISABLE_CHARGING
-				if (batteries[i].voltage >= m_cfRechargeVoltage)
-				{
-					batteries[i].pwm = PWM_OFF;
-					pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
-					batteries[i].state = EBatteryState::Finished;
-				}
-				else
-				{
-
-					if (batteries[i].pwm == PWM_OFF)
-					{
-						batteries[i].pwm = PWM_CHARGE;
-						pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
-					}
-
-#ifdef USE_SERIAL
-					Serial.print("Batterie : ");
-					Serial.print(i + 1);
-					Serial.print(" RECHARGING");
-					Serial.println();
-#endif
-					break;
-				}
-#else
-				batteries[i].state = EBatteryState::Finished;
-#endif
-			} 
-			case EBatteryState::Finished:
-			{
 #ifdef USE_SERIAL
 				Serial.print("Batterie : ");
 				Serial.print(i + 1);
-				Serial.print(" FINISHED");
+				Serial.print(" RECHARGING");
 				Serial.println();
 #endif
-			} 
+				break;
+			}
+#else
+			if (lastScreen <= LCD_ON)
+			{
+				EnableLCD();
+				lastScreen = i;
+			}
+			batteries[i].state = EBatteryState::Finished;
+#endif
+		}
+		case EBatteryState::Finished:
+		{
+#ifdef USE_SERIAL
+			Serial.print("Batterie : ");
+			Serial.print(i + 1);
+			Serial.print(" FINISHED");
+			Serial.println();
+#endif
+		}
+		default:
+			break;
+		}
+	}
+}
+
+void ResetLastInfo()
+{
+	if (bLastInfoTrigered)
+	{
+		bLastInfoTrigered = false;
+		batteries[lastScreen].state = EBatteryState::Empty;
+		batteryLastInfoTimer = millis();
+	}
+}
+
+int PrioritySelect(int step, int nLast)
+{
+	int result = nLast;
+	if (result < 0)
+	{
+		result = 0;
+	}
+	else
+	{
+		ResetLastInfo();
+	}
+
+	int nCount = 0;
+	bool bFound = false;
+	EBatteryState searchState = EBatteryState::Finished;
+
+#ifdef DEBUG
+	Serial.print("Entering Priority Selecttion loop");
+	Serial.println();
+#endif
+	do {
+		nCount += 1;
+
+		result = result + step;
+
+		//checking search bounds
+		if (result < 0)
+		{
+			result = BAT_COUNT - 1;
+		}
+		else if (result >= BAT_COUNT)
+		{
+			result = 0;
+		}
+
+		if (batteries[result].state == searchState)
+		{
+			bFound = true;
+		}
+
+		if (!bFound && nCount == BAT_COUNT && searchState == EBatteryState::Finished)
+		{
+#ifdef DEBUG
+			Serial.print("Priority Selecttion loop: switch to Discharging");
+			Serial.println();
+#endif
+			searchState = EBatteryState::Discharging;
+			nCount = 0;
+		}
+
+	} while (!bFound && nCount <= BAT_COUNT);
+
+	if (!bFound)
+		result = LCD_ON;
+
+#ifdef DEBUG
+	Serial.print("Priority Selecttion loop: returning ");
+	Serial.print(result);
+	Serial.println();
+#endif
+
+	return result;
+}
+
+void UpdateInput()
+{
+	int readkey = analogRead(0);
+
+#ifdef DEBUG
+	Serial.print("Read Value: ");
+	Serial.print(readkey);
+	Serial.println();
+#endif
+
+	if (activeButton == EKeyID::None)
+	{
+		// if(readkey<30) {
+		// 	activeButton = EKeyID::Right;
+		// }
+		if (readkey >= 30 && readkey<160) {
+			activeButton = EKeyID::Up;
+		}
+		if (readkey >= 160 && readkey<330) {
+			activeButton = EKeyID::Down;
+		}
+		// if(readkey>= 330 && readkey<500) {
+		// 	activeButton = EKeyID::Left;
+		// }
+		// if(readkey>= 500 && readkey<740) {
+		// 	activeButton = EKeyID::Select;
+		// }
+
+	}
+	else if (readkey >= 740) {
+		InputActive = false;
+		activeButton = EKeyID::None;
+#ifdef DEBUG
+		Serial.print("All released");
+		Serial.println();
+#endif
+	}
+
+	if (activeButton != EKeyID::None)
+	{
+		EnableLCD();
+		if (lastScreen < 0)
+		{
+			InputActive = true;
+			lastScreen = PrioritySelect(1, lastScreen);
+			return;
+		}
+	}
+
+	if (!InputActive)
+	{
+		switch (activeButton)
+		{
+		case EKeyID::Right:
+		{
+			InputActive = true;
+#ifdef DEBUG
+			Serial.print("RIGHT");
+			Serial.println();
+#endif
+			break;
+		}
+		case EKeyID::Left:
+		{
+			InputActive = true;
+#ifdef DEBUG
+			Serial.print("LEFT");
+			Serial.println();
+#endif
+			break;
+		}
+		case EKeyID::Up:
+		{
+			InputActive = true;
+#ifdef DEBUG
+			Serial.print("UP");
+			Serial.println();
+#endif        
+			lastScreen = PrioritySelect(1, lastScreen);
+			break;
+		}
+		case EKeyID::Down:
+		{
+			InputActive = true;
+#ifdef DEBUG
+			Serial.print("DOWN");
+			Serial.println();
+#endif
+			lastScreen = PrioritySelect(-1, lastScreen);
+			break;
+		}
+		case EKeyID::Select:
+		{
+			InputActive = true;
+#ifdef DEBUG
+			Serial.print("SELECT");
+			Serial.println();
+#endif
+			break;
+		}
+		default:
+		{
+		}
+
+		};
+	}
+}
+
+void EnableLCD()
+{
+	lcd.setBacklight(LOW);
+	lcdTimeOut = millis() + LCD_TIMEOUT;
+}
+
+void UpdateDisplay()
+{
+	if (lastScreen == LCD_ON) // MAIN screen
+	{
+		lastScreen = LCD_OFF; // To prevent clearing screen repeatedly
+		lcd.clear();
+		lcd.setCursor(1, 0);
+		lcd.print("Battery Tester");
+		EnableLCD();
+	}
+	else if (lastScreen >= 0 && lcdTimeOut > millis()) // Display the last active battery for some time then reset to MAIN screen
+	{
+		switch (batteries[lastScreen].state)
+		{
+			case EBatteryState::Empty:
+			{
+				lcd.clear();
+				lcd.setCursor(3, 0);
+				lcd.print("Battery ");
+				lcd.setCursor(11, 0);
+				lcd.print(lastScreen + 1);
+				lcd.setCursor(1, 1);
+				lcd.print("Empty  Slot!");
+				break;
+			}
+			case EBatteryState::Low:
+			{
+				lcd.clear();
+				lcd.setCursor(3, 0);
+				lcd.print("Battery ");
+				lcd.setCursor(11, 0);
+				lcd.print(lastScreen + 1);
+				lcd.setCursor(3, 1);
+				lcd.print("LOW: ");
+				lcd.setCursor(8, 1);
+				lcd.print(batteries[lastScreen].voltage);
+				lcd.setCursor(12, 1);
+				lcd.print("V");
+				break;
+			}
+			case EBatteryState::PreDischarge:
+			{
+				break;
+			}case EBatteryState::Charging:
+			{
+				break;
+			}case EBatteryState::Discharging:
+			{
+				lcd.clear();
+				lcd.setCursor(1, 0);
+				lcd.print("Bat-");
+				lcd.setCursor(5, 0);
+				lcd.print(lastScreen + 1);
+				lcd.setCursor(8, 0);
+				lcd.print(round(batteries[lastScreen].capacity));
+				lcd.setCursor(12, 0);
+				lcd.print("mAh");
+				lcd.setCursor(0, 1);
+				lcd.print(batteries[lastScreen].voltage);
+				lcd.setCursor(4, 1);
+				lcd.print("V");
+				lcd.setCursor(6, 1);
+				lcd.print(round(batteries[lastScreen].resistance));
+				lcd.setCursor(9, 1);
+				lcd.print("m");
+				lcd.setCursor(10, 1);
+				lcd.write(0);
+				lcd.setCursor(12, 1);
+				lcd.print(round(batteries[lastScreen].loadVoltage));
+				lcd.setCursor(15, 1);
+				lcd.print("A");
+				break;
+			}case EBatteryState::Recharging:
+			{
+				break;
+			}case EBatteryState::Finished:
+			{
+				lcd.clear();
+				lcd.setCursor(3, 0);
+				lcd.print("Batterie ");
+				lcd.setCursor(12, 0);
+				lcd.print(lastScreen + 1);
+				lcd.setCursor(2, 1);
+				lcd.print(round(batteries[lastScreen].capacity));
+				lcd.setCursor(6, 1);
+				lcd.print("mAh");
+				lcd.setCursor(10, 1);
+				lcd.print(round(batteries[lastScreen].resistance));
+				lcd.setCursor(13, 1);
+				lcd.print("m");
+				lcd.setCursor(14, 1);
+				lcd.write(0);
+				break;
+			}
 			default:
 				break;
 		}
 	}
+	else if (lcdTimeOut <= millis() && lcdTimeOut > 0)
+	{
+		lastScreen = LCD_OFF;
+		lcdTimeOut = 0;
+		lcd.clear();
+		lcd.setBacklight(HIGH);
+	}
 }
+
+

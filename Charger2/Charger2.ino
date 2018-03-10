@@ -39,7 +39,7 @@
 //
 //81.85931902590525 - 0.11406781021018966x + 0.00007701200364055409x2 - 2.666253770521e-8x3 + 3.54777456e-12x4 - formula for % diff from OPUS
 
-#define USE_SERIAL
+//#define USE_SERIAL
 #define DISABLE_CHARGING
 
 
@@ -79,7 +79,7 @@
 #define BAT_COUNT 20
 #define BAT_READ_COUNT 10
 #ifdef DISABLE_CHARGING
-const float m_cfBatteryDischargeVoltage = 3.5f;//V
+const float m_cfBatteryDischargeVoltage = 4.1f;//V
 #else
 const float m_cfBatteryDischargeVoltage = 4.2f;//V
 #endif // DISABLE_CHARGING
@@ -105,10 +105,12 @@ bool InputActive = false;
 #define LCD_ON -1
 #define LCD_OFF -2
 
-#define LCD_TIMEOUT 7000
+#define LCD_TIMEOUT 10000
+#define LCD_REFRESH 500
 
 short lastScreen = LCD_ON;
 unsigned long lcdTimeOut = LCD_TIMEOUT;
+unsigned long screenRefresh = LCD_REFRESH;
 unsigned long batteryLastInfoTimer = 0;
 bool bLastInfoTrigered = false;
 
@@ -133,12 +135,11 @@ enum class EBatteryState :int
 uint8_t muxSig[MUX_COUNT] = { MUX_1_SIG, MUX_2_SIG, MUX_3_SIG, MUX_4_SIG };
 int muxEN[MUX_COUNT] = { MUX_1_EN, MUX_2_EN, MUX_3_EN, MUX_4_EN };
 
-struct Data
-{
+struct MuxData{
 	int chanel;
 	int id;
 
-	Data() :chanel(0), id(0) {};
+	MuxData() :chanel(0), id(0) {};
 };
 
 struct ResistanceData {
@@ -152,12 +153,14 @@ struct ResistanceData {
 
 struct Battery
 {
-	Data batterieReadPinsData;
-	Data ressistorReadPinsData;
-	Data pwmPinsData;
+	MuxData temperatureReadPinsData;
+	MuxData batterieReadPinsData;
+	MuxData ressistorReadPinsData;
+	MuxData pwmPinsData;
 	ResistanceData resistanceData;
 	EBatteryState state;
 	unsigned int pwm;
+	float temperature;
 	float capacity;
 	float resistance;
 	float voltage;
@@ -165,7 +168,7 @@ struct Battery
 	float dischargeCurrent; //this is for if you need to set seperate discharge rates on slots
 	unsigned long lasTime;
 
-	Battery() :state(EBatteryState::Empty), pwm(PWM_OFF), capacity(0.f), resistance(0.f), voltage(0.f), loadVoltage(0.f), dischargeCurrent(m_cfDischargeCurrent), lasTime(0) {};
+	Battery() :state(EBatteryState::Empty), pwm(PWM_OFF), temperature(0.f), capacity(0.f), resistance(0.f), voltage(0.f), loadVoltage(0.f), dischargeCurrent(m_cfDischargeCurrent), lasTime(0) {};
 	void Reset()
 	{
 		resistanceData.voltages[0] = 0.f;
@@ -210,8 +213,14 @@ float voltageReadCalibration[BAT_COUNT] =
 	0.0255810778f
 };
 
+void EnableLCD(float timeMultiplier = 1.f)
+{
+	lcd.setBacklight(LOW);
+	lcdTimeOut = millis() + (unsigned long)(round((float)LCD_TIMEOUT*timeMultiplier));
+}
+
 //read voltage from analog pins
-float getVoltage(const Data& pinData, float voltageMultiplierValue = 1.0) {
+float getVoltage(const MuxData& pinData, float voltageMultiplierValue = 1.0) {
 	float sample = 0.0;
 	//Enabling the proper multiplexer for read sequences
 	if (currentMUX != pinData.id)
@@ -231,9 +240,45 @@ float getVoltage(const Data& pinData, float voltageMultiplierValue = 1.0) {
 	//voltage is read from voltage divider so multiplication by 2 is necesary
 	return (float)sample * voltageMultiplierValue * ((readVcc() * 0.001f) / 1024.0);
 }
+
+float getCellTemp(const MuxData& pinData, int t = 1)
+{	
+	float sample = 0.0;
+	//Enabling the proper multiplexer for read sequences
+	if (currentMUX != pinData.id)
+	{
+		digitalWrite(muxEN[currentMUX], HIGH);
+		digitalWrite(muxEN[pinData.id], LOW);
+		currentMUX = pinData.id;
+	}
+	mux.channel(pinData.chanel);
+	delay(1);
+
+	float R1 = 10000;
+	float logR2, R2, T, Tc, Tf;
+	float c1 = 1.009249522e-03, c2 = 2.378405444e-04, c3 = 2.019202697e-07;
+
+	R2 = R1 * (1023.0 / (float)analogRead(muxSig[pinData.id]) - 1.0);
+	logR2 = log(R2);
+	T = (1.0 / (c1 + c2 * logR2 + c3 * logR2*logR2*logR2));
+	return (float)(T - 278.15);
+}
+unsigned long lastUpdate = 0;
 void UpdateBatteries()
 {
-	//load voltage and batterie voltage reads in separate loops in order to minimize the multiplexer switching
+	if ((millis() - lastUpdate) >= 1000)
+	{
+		//load voltage and batterie voltage reads in separate loops in order to minimize the multiplexer switching
+		for (int i = 0; i < BAT_COUNT; ++i)
+		{
+			batteries[i].temperature = getCellTemp(batteries[i].temperatureReadPinsData);
+#ifdef USE_SERIAL
+			Serial.print(batteries[i].temperature);
+			Serial.print(" ");
+#endif
+		}
+		lastUpdate = millis();
+	}
 	for (int i = 0; i < BAT_COUNT; ++i)
 	{
 		batteries[i].voltage = getVoltage(batteries[i].batterieReadPinsData, 2.f);
@@ -244,6 +289,9 @@ void UpdateBatteries()
 		batteries[i].loadVoltage = getVoltage(batteries[i].ressistorReadPinsData);
 		batteries[i].loadVoltage += batteries[i].loadVoltage * RESISTANCE_MULTIPLIER;
 	}
+#ifdef USE_SERIAL
+	Serial.println();
+#endif
 }
 void UpdateCapacity(float current, int batID)
 {
@@ -327,13 +375,26 @@ byte omega[8] = {
 	B11011,
 	B00000
 };
+byte celcius[8] = {
+	B00000,
+	B10110,
+	B01000,
+	B01000,
+	B01000,
+	B01000,
+	B00110,
+	B00000
+};
 
 void setup() {
 	Wire.begin();
 	Serial.begin(9600);
 	lcd.createChar(0, omega);
+	lcd.createChar(1, celcius);
 	lcd.begin(16, 2);
 	UpdateDisplay();
+
+	lastUpdate = millis();
 
 	//*********************** Multiplexer HC4067 setup
 	pinMode(MUX_1_SIG, INPUT);
@@ -379,6 +440,8 @@ void setup() {
 	//	9 - 15	MUX 2
 	//	0 - 12	MUX 3 - Voltage read out from ressistor
 
+	int muxTEMPNum = 0;
+	int muxCH_TEMPNum = 0;
 	int muxBVNum = 1;
 	int muxCH_BVNum = 5;
 	int muxRVNum = 2;
@@ -388,6 +451,15 @@ void setup() {
 	for (int i = 0; i < BAT_COUNT; ++i)
 	{
 		batteries[i] = Battery();
+
+		if (muxCH_TEMPNum >= MUX_CH_COUNT)
+		{
+			muxCH_TEMPNum = 0;
+			++muxTEMPNum;
+		}
+
+		batteries[i].temperatureReadPinsData.chanel = muxCH_TEMPNum++;
+		batteries[i].temperatureReadPinsData.id = muxTEMPNum;
 
 		if (muxCH_BVNum >= MUX_CH_COUNT)
 		{
@@ -443,41 +515,86 @@ void UpdateState()
 {
 	for (size_t i = 0; i < BAT_COUNT; ++i)
 	{
-		bool reinsertedAfterRemove = bLastInfoTrigered && lastScreen == i &&  batteries[i].voltage > m_cfBatteryCutOffVoltage;
-
-		if (reinsertedAfterRemove)
+		bool reinserted = bLastInfoTrigered && lastScreen == i && batteryLastInfoTimer > millis() && batteries[lastScreen].voltage > m_cfBatteryCutOffVoltage;
+		if (reinserted)
 		{
 			bLastInfoTrigered = false;
-			batteryLastInfoTimer = millis();
-			batteries[i].Reset();
+			batteryLastInfoTimer = millis() + LCD_TIMEOUT/2;
 		}
-//!reinsertedAfterRemove &&
-		if (batteries[i].state != EBatteryState::Empty && batteries[i].voltage <= m_cfBatteryCutOffVoltage - 0.5f)
-		{
-			if (!bLastInfoTrigered || lastScreen != i)
-			{
-				if (lastScreen != i)
-				{
-					batteries[lastScreen].Reset();
-				}
 
-				EnableLCD();//should be before batteryLastInfoTimer for LCD to turn off before batteryLastInfoTimer timer rans out
+		if (!reinserted && batteries[i].state != EBatteryState::Empty && batteries[i].voltage <= m_cfBatteryCutOffVoltage - 0.5f)
+		{
+			if (!bLastInfoTrigered)
+			{
+				EnableLCD();
 				bLastInfoTrigered = true;
 				batteryLastInfoTimer = millis() + LCD_TIMEOUT;
 				lastScreen = i;
 			}
-			else if(lastScreen == i && batteryLastInfoTimer <= millis()) //time ran out for reinsertion of removed battery
+			else
 			{
-				bLastInfoTrigered = false;
-				batteries[i].Reset();
+				if (lastScreen == i)
+				{
+					if (batteryLastInfoTimer <= millis())
+					{
+						batteries[lastScreen].Reset();
+						bLastInfoTrigered = false;
+						batteryLastInfoTimer = millis();
+						lastScreen = PrioritySelect(1, lastScreen);
+
+						if (lastScreen >= 0)
+						{
+							batteryLastInfoTimer = millis() + LCD_TIMEOUT/2;
+							EnableLCD(0.5f);
+						}
+					}
+					continue;
+				}
+				else
+				{
+					if (lastScreen >= 0)
+						batteries[lastScreen].Reset();
+					batteryLastInfoTimer = millis();
+					lastScreen = i;
+					EnableLCD();
+				}
 			}
-#ifdef USE_SERIAL
-			Serial.print("Batterie : ");
-			Serial.print(i + 1);
-			Serial.print(" RESET");
-			Serial.println();
-#endif
 		}
+//		bool reinsertedAfterRemove = bLastInfoTrigered && lastScreen == i &&  batteries[i].voltage > m_cfBatteryCutOffVoltage;
+//
+//		if (reinsertedAfterRemove)
+//		{
+//			bLastInfoTrigered = false;
+//			batteryLastInfoTimer = millis();
+//			batteries[i].Reset();
+//		}
+////!reinsertedAfterRemove &&
+//		if (batteries[i].state != EBatteryState::Empty && batteries[i].voltage <= m_cfBatteryCutOffVoltage - 0.5f)
+//		{
+//			if (!bLastInfoTrigered || lastScreen != i)
+//			{
+//				if (lastScreen != i)
+//				{
+//					batteries[lastScreen].Reset();
+//				}
+//
+//				EnableLCD();//should be before batteryLastInfoTimer for LCD to turn off before batteryLastInfoTimer timer rans out
+//				bLastInfoTrigered = true;
+//				batteryLastInfoTimer = millis() + LCD_TIMEOUT;
+//				lastScreen = i;
+//			}
+//			else if(lastScreen == i && batteryLastInfoTimer <= millis()) //time ran out for reinsertion of removed battery
+//			{
+//				bLastInfoTrigered = false;
+//				batteries[i].Reset();
+//			}
+//#ifdef USE_SERIAL
+//			Serial.print("Batterie : ");
+//			Serial.print(i + 1);
+//			Serial.print(" RESET");
+//			Serial.println();
+//#endif
+//		}
 
 		switch (batteries[i].state)
 		{
@@ -496,16 +613,12 @@ void UpdateState()
 #endif
 			else if(batteries[i].voltage >= m_cfBatteryCutOffVoltage){
 				batteries[i].state = EBatteryState::Low;
-				EnableLCD();
-				if (bLastInfoTrigered)
+
+				if (!bLastInfoTrigered)
 				{
-					batteryLastInfoTimer = 0;
-					bLastInfoTrigered = false;
-					batteries[lastScreen].Reset();
-					if(lastScreen == i)
-						break;
+					EnableLCD();
+					lastScreen = i;
 				}
-				lastScreen = i;
 			}
 			else
 			{
@@ -595,16 +708,13 @@ void UpdateState()
 			if (batteries[i].resistanceData.timer == 0)
 			{
 				batteries[i].resistanceData.timer = millis() + RESISTANCE_TIMER;
-				EnableLCD();
-				if (bLastInfoTrigered)
+				
+				if (!bLastInfoTrigered)
 				{
-					batteryLastInfoTimer = 0;
-					bLastInfoTrigered = false;
-					batteries[lastScreen].Reset();
-					if (lastScreen == i)
-						break;
+					EnableLCD();
+					lastScreen = i;
 				}
-				lastScreen = i;
+
 				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, PWM_I_1);
 #ifdef USE_SERIAL
 				Serial.print("Batterie : ");
@@ -657,7 +767,7 @@ void UpdateState()
 		}
 		case EBatteryState::Discharging:
 		{
-			if (batteries[i].voltage <= m_cfBatteryCutOffVoltage)
+			if (batteries[i].voltage <= m_cfBatteryCutOffVoltage && (lastScreen == i?!bLastInfoTrigered:true))
 			{
 #ifdef USE_SERIAL
 				Serial.print("Batterie : ");
@@ -736,7 +846,7 @@ void UpdateState()
 				break;
 			}
 #else
-			if (lastScreen <= LCD_ON)//Finished screen is shown
+			if (!bLastInfoTrigered && lastScreen <= LCD_ON)//Finished screen is shown
 			{
 				EnableLCD();
 				lastScreen = i;
@@ -867,7 +977,8 @@ void UpdateInput()
 	if (activeButton != EKeyID::None)
 	{
 		EnableLCD();
-		if (lastScreen < 0)
+		
+		if (lastScreen <= LCD_ON)
 		{
 			InputActive = true;
 			lastScreen = PrioritySelect(1, lastScreen);
@@ -936,14 +1047,15 @@ void UpdateInput()
 	}
 }
 
-void EnableLCD()
-{
-	lcd.setBacklight(LOW);
-	lcdTimeOut = millis() + LCD_TIMEOUT;
-}
-
 void UpdateDisplay()
 {
+	if (screenRefresh >= millis()) return;
+
+	if (lcdTimeOut > 0 && screenRefresh < millis())
+	{
+		screenRefresh = millis() + LCD_REFRESH;
+	}
+
 	if (lastScreen == LCD_ON) // MAIN screen
 	{
 		lastScreen = LCD_OFF; // To prevent clearing screen repeatedly
@@ -1034,9 +1146,18 @@ void UpdateDisplay()
 				lcd.setCursor(10, 1);
 				lcd.write(0);
 				lcd.setCursor(12, 1);
-				lcd.print(round(batteries[lastScreen].loadVoltage));
-				lcd.setCursor(15, 1);
-				lcd.print("A");
+				if ((lcdTimeOut - LCD_TIMEOUT/2) > millis())
+				{
+					lcd.print(batteries[lastScreen].loadVoltage);
+					lcd.setCursor(15, 1);
+					lcd.print("A");
+				}
+				else
+				{
+					lcd.print(round(batteries[lastScreen].temperature));
+					lcd.setCursor(14, 1);
+					lcd.write(1);
+				}
 				break;
 			}case EBatteryState::Recharging:
 			{

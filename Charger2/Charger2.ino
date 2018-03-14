@@ -39,6 +39,7 @@
 //
 //81.85931902590525 - 0.11406781021018966x + 0.00007701200364055409x2 - 2.666253770521e-8x3 + 3.54777456e-12x4 - formula for % diff from OPUS
 
+//#define USE_SERIAL_INFO
 //#define USE_SERIAL
 #define DISABLE_CHARGING
 
@@ -266,30 +267,54 @@ float getCellTemp(const MuxData& pinData, int t = 1)
 unsigned long lastUpdate = 0;
 void UpdateBatteries()
 {
+#ifdef USE_SERIAL_INFO
+	Serial.print("**********************************************************");
+	Serial.println();
+#endif
 	if ((millis() - lastUpdate) >= 1000)
 	{
 		//load voltage and batterie voltage reads in separate loops in order to minimize the multiplexer switching
 		for (int i = 0; i < BAT_COUNT; ++i)
 		{
 			batteries[i].temperature = getCellTemp(batteries[i].temperatureReadPinsData);
-#ifdef USE_SERIAL
+#ifdef USE_SERIAL_INFO
 			Serial.print(batteries[i].temperature);
 			Serial.print(" ");
 #endif
 		}
 		lastUpdate = millis();
 	}
+#ifdef USE_SERIAL_INFO
+	Serial.println();
+#endif
 	for (int i = 0; i < BAT_COUNT; ++i)
 	{
 		batteries[i].voltage = getVoltage(batteries[i].batterieReadPinsData, 2.f);
 		batteries[i].voltage -= batteries[i].voltage * voltageReadCalibration[i];
+#ifdef USE_SERIAL_INFO
+		Serial.print(batteries[i].voltage);
+		Serial.print(" ");
+#endif
 	}
+#ifdef USE_SERIAL_INFO
+	Serial.println();
+#endif
 	for (int i = 0; i < BAT_COUNT; ++i)
 	{
 		batteries[i].loadVoltage = getVoltage(batteries[i].ressistorReadPinsData);
 		batteries[i].loadVoltage += batteries[i].loadVoltage * RESISTANCE_MULTIPLIER;
+#ifdef USE_SERIAL_INFO
+		Serial.print(batteries[i].loadVoltage*1000);
+		Serial.print(" ");
+#endif
 	}
-#ifdef USE_SERIAL
+#ifdef USE_SERIAL_INFO
+	Serial.println();
+	for (int i = 0; i < BAT_COUNT; ++i)
+	{
+		Serial.print(batteries[i].pwm);
+		Serial.print(" ");
+	}
 	Serial.println();
 #endif
 }
@@ -365,32 +390,32 @@ long readVcc() {
 	return result; // Vcc in millivolts
 }
 
-byte omega[8] = {
-	B00000,
-	B01110,
-	B10001,
-	B10001,
-	B10001,
-	B01010,
-	B11011,
-	B00000
-};
-byte celcius[8] = {
-	B00000,
-	B10110,
-	B01000,
-	B01000,
-	B01000,
-	B01000,
-	B00110,
-	B00000
-};
+//byte omega[8] = {
+//	B00000,
+//	B01110,
+//	B10001,
+//	B10001,
+//	B10001,
+//	B01010,
+//	B11011,
+//	B00000
+//};
+//byte celcius[8] = {
+//	B00000,
+//	B10110,
+//	B01000,
+//	B01000,
+//	B01000,
+//	B01000,
+//	B00110,
+//	B00000
+//};
 
 void setup() {
 	Wire.begin();
 	Serial.begin(9600);
-	lcd.createChar(0, omega);
-	lcd.createChar(1, celcius);
+	//lcd.createChar(0, omega);
+	//lcd.createChar(1, celcius);
 	lcd.begin(16, 2);
 	UpdateDisplay();
 
@@ -1142,9 +1167,9 @@ void UpdateDisplay()
 				lcd.setCursor(6, 1);
 				lcd.print(round(batteries[lastScreen].resistance));
 				lcd.setCursor(9, 1);
-				lcd.print("m");
-				lcd.setCursor(10, 1);
-				lcd.write(0);
+				lcd.print("mO");
+				//lcd.setCursor(10, 1);
+				//lcd.write(0);
 				lcd.setCursor(12, 1);
 				if ((lcdTimeOut - LCD_TIMEOUT/2) > millis())
 				{
@@ -1155,8 +1180,9 @@ void UpdateDisplay()
 				else
 				{
 					lcd.print(round(batteries[lastScreen].temperature));
-					lcd.setCursor(14, 1);
-					lcd.write(1);
+					lcd.setCursor(14, 1); 
+					lcd.print("C");
+					//lcd.write(1);
 				}
 				break;
 			}case EBatteryState::Recharging:
@@ -1187,9 +1213,9 @@ void UpdateDisplay()
 				lcd.setCursor(10, 1);
 				lcd.print(round(batteries[lastScreen].resistance));
 				lcd.setCursor(13, 1);
-				lcd.print("m");
-				lcd.setCursor(14, 1);
-				lcd.write(0);
+				lcd.print("mO");
+				//lcd.setCursor(14, 1);
+				//lcd.write(0);
 				break;
 			}
 			default:

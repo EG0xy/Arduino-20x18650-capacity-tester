@@ -262,7 +262,7 @@ float getCellTemp(const MuxData& pinData, int t = 1)
 	R2 = R1 * (1023.0 / (float)analogRead(muxSig[pinData.id]) - 1.0);
 	logR2 = log(R2);
 	T = (1.0 / (c1 + c2 * logR2 + c3 * logR2*logR2*logR2));
-	return (float)(T - 278.15);
+	return (float)(T - 278.15);// added -2 to get close to temperature, but formula should be adopted to thermistor instead!!
 }
 unsigned long lastUpdate = 0;
 void UpdateBatteries()
@@ -531,7 +531,8 @@ void ResetLastInfo()
 	if (bLastInfoTrigered)
 	{
 		bLastInfoTrigered = false;
-		batteries[lastScreen].state = EBatteryState::Empty;
+		if(lastScreen > LCD_ON)
+			batteries[lastScreen].Reset();
 		batteryLastInfoTimer = millis();
 	}
 }
@@ -573,7 +574,6 @@ void UpdateState()
 							EnableLCD(0.5f);
 						}
 					}
-					continue;
 				}
 				else
 				{
@@ -584,6 +584,7 @@ void UpdateState()
 					EnableLCD();
 				}
 			}
+      continue;
 		}
 //		bool reinsertedAfterRemove = bLastInfoTrigered && lastScreen == i &&  batteries[i].voltage > m_cfBatteryCutOffVoltage;
 //
@@ -628,7 +629,7 @@ void UpdateState()
 			if (batteries[i].voltage >= m_cfBatteryDischargeVoltage)
 			{
 				batteries[i].state = EBatteryState::Resistance;
-				break;
+				//break;
 			}
 #ifndef DISABLE_CHARGING
 			else if (batteries[i].voltage >= m_cfPreDischargeVoltage && batteries[i].voltage < m_cfBatteryDischargeVoltage)
@@ -792,7 +793,7 @@ void UpdateState()
 		}
 		case EBatteryState::Discharging:
 		{
-			if (batteries[i].voltage <= m_cfBatteryCutOffVoltage && (lastScreen == i?!bLastInfoTrigered:true))
+			if (batteries[i].voltage <= m_cfBatteryCutOffVoltage)// && (lastScreen == i?!bLastInfoTrigered:true))
 			{
 #ifdef USE_SERIAL
 				Serial.print("Batterie : ");
@@ -871,7 +872,7 @@ void UpdateState()
 				break;
 			}
 #else
-			if (!bLastInfoTrigered && lastScreen <= LCD_ON)//Finished screen is shown
+			if (!bLastInfoTrigered)// && lastScreen <= LCD_ON)//Finished screen is shown
 			{
 				EnableLCD();
 				lastScreen = i;
@@ -961,7 +962,7 @@ int PrioritySelect(int step, int nLast)
 void UpdateInput()
 {
 	//Disable controlls for when battery is removed
-	if (bLastInfoTrigered) return;
+	if (bLastInfoTrigered && lastScreen > LCD_ON) return;
 
 	int readkey = analogRead(0);
 

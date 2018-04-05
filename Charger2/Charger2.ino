@@ -39,9 +39,9 @@
 //
 //81.85931902590525 - 0.11406781021018966x + 0.00007701200364055409x2 - 2.666253770521e-8x3 + 3.54777456e-12x4 - formula for % diff from OPUS
 
-//#define USE_SERIAL_INFO
+#define USE_SERIAL_INFO
 //#define USE_SERIAL
-#define DISABLE_CHARGING
+//#define DISABLE_CHARGING
 
 
 #define MUX_COUNT 4
@@ -64,25 +64,25 @@
 #define PWM_CH_COUNT 16
 #define MAX_PWM 4095
 
-#define PWM_OFF 0
+#define PWM_OFF 1023//NO charge AND NO DISCHARGE
 #define PWM_CHARGE 0
-#define PWM_ON 1547 //~1000mA
-#define PWM_I_1 399 // ~250.38mA
-#define PWM_I_2 1547 // ~1000.49mA
+#define PWM_ON 3230 //~1000mA
+#define PWM_I_1 2325 // ~255mA
+#define PWM_I_2 3230 // ~1000mA
 
 //Button input
 #define INPUT_PIN A0
 
-#define RESISTANCE_TIMER 1500 //waits for millliseconds until another mesurement for resistance calculation
+#define RESISTANCE_TIMER 3000 //waits for millliseconds until another mesurement for resistance calculation
 
 #define RESISTANCE_MULTIPLIER 0.01056421f //1000mA mesured
 
 #define BAT_COUNT 20
 #define BAT_READ_COUNT 10
 #ifdef DISABLE_CHARGING
-const float m_cfBatteryDischargeVoltage = 4.1f;//V
+const float m_cfBatteryDischargeVoltage = 4.1;//V
 #else
-const float m_cfBatteryDischargeVoltage = 4.2f;//V
+const float m_cfBatteryDischargeVoltage = 4.15f;//V
 #endif // DISABLE_CHARGING
 const float m_cfBatteryCutOffVoltage = 2.8f;//V
 const float m_cfRechargeVoltage = 3.75f;//V
@@ -239,7 +239,7 @@ float getVoltage(const MuxData& pinData, float voltageMultiplierValue = 1.0) {
 	sample = sample / (float)BAT_READ_COUNT;
 
 	//voltage is read from voltage divider so multiplication by 2 is necesary
-	return (float)sample * voltageMultiplierValue * ((readVcc() * 0.001f) / 1024.0);
+	return (float)sample * voltageMultiplierValue *((readVcc() * 0.001f) / 1024.0);
 }
 
 float getCellTemp(const MuxData& pinData, int t = 1)
@@ -335,11 +335,11 @@ void SetPWM(float current, int batID) {
 
 		if (currentDiff > 0 && newPwm < MAX_PWM)
 		{
-			newPwm += max(pwmChange, 1);
+			newPwm += 1;// max(pwmChange, 1);
 		}
 		else if (currentDiff < 0 && newPwm > 0)
 		{
-			newPwm -= max(pwmChange, 1);
+			newPwm -= 1;// max(pwmChange, 1);
 		}
 
 		if (newPwm > MAX_PWM)
@@ -412,12 +412,16 @@ long readVcc() {
 //};
 
 void setup() {
+	//using lm336z5 to get 5.00V referance
+	//analogReference(EXTERNAL);
+
 	Wire.begin();
 	Serial.begin(9600);
 	//lcd.createChar(0, omega);
 	//lcd.createChar(1, celcius);
 	lcd.begin(16, 2);
-	UpdateDisplay();
+//	UpdateDisplay();
+	lcd.setBacklight(LOW);
 
 	lastUpdate = millis();
 
@@ -518,12 +522,33 @@ void setup() {
 		pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
 	}
 }
+float fmap(float x, float in_min, float in_max, float out_min, float out_max) {
+	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
 
 void loop() {
 	UpdateBatteries();
 	UpdateState();
 	UpdateInput();
 	UpdateDisplay();
+
+	//lcd.setCursor(0, 0);
+	//lcd.print("L: ");
+	//lcd.setCursor(3, 0);
+	//lcd.print(batteries[13].loadVoltage);
+	//lcd.setCursor(7, 0);
+	//lcd.print("V");
+	//lcd.setCursor(9, 0);
+	//lcd.print(batteries[13].temperature);
+	//lcd.setCursor(14, 0);
+	//lcd.print("C");
+
+	//lcd.setCursor(0, 1);
+	//lcd.print(batteries[13].pwm);
+	//lcd.setCursor(5, 1);
+	//lcd.print(batteries[13].voltage);
+	//lcd.setCursor(10, 1);
+	//lcd.print("V");
 }
 
 void ResetLastInfo()
@@ -541,7 +566,7 @@ void UpdateState()
 {
 	for (size_t i = 0; i < BAT_COUNT; ++i)
 	{
-		bool reinserted = bLastInfoTrigered && lastScreen == i && batteryLastInfoTimer > millis() && batteries[lastScreen].voltage > m_cfBatteryCutOffVoltage;
+		bool reinserted = bLastInfoTrigered && lastScreen == i && batteries[i].state != EBatteryState::Finished && batteryLastInfoTimer > millis() && batteries[lastScreen].voltage > m_cfBatteryCutOffVoltage;
 		if (reinserted)
 		{
 			bLastInfoTrigered = false;
@@ -579,12 +604,12 @@ void UpdateState()
 				{
 					if (lastScreen >= 0)
 						batteries[lastScreen].Reset();
-					batteryLastInfoTimer = millis();
+					batteryLastInfoTimer = millis() + LCD_TIMEOUT;
 					lastScreen = i;
 					EnableLCD();
 				}
 			}
-      continue;
+			continue;
 		}
 //		bool reinsertedAfterRemove = bLastInfoTrigered && lastScreen == i &&  batteries[i].voltage > m_cfBatteryCutOffVoltage;
 //
@@ -638,7 +663,7 @@ void UpdateState()
 			}
 #endif
 			else if(batteries[i].voltage >= m_cfBatteryCutOffVoltage){
-				batteries[i].state = EBatteryState::Low;
+				batteries[i].state = EBatteryState::Charging;
 
 				if (!bLastInfoTrigered)
 				{
@@ -655,6 +680,12 @@ void UpdateState()
 		{
 			if (batteries[i].state == EBatteryState::Low)
 			{
+				if (batteries[i].voltage >= m_cfBatteryDischargeVoltage)// if you add another battery in to holder
+				{
+					batteries[i].state = EBatteryState::Resistance;
+					EnableLCD();
+					lastScreen = i;
+				}
 #ifdef USE_SERIAL
 				Serial.print("Batterie : ");
 				Serial.print(i + 1);
@@ -680,21 +711,23 @@ void UpdateState()
 			Serial.println();
 #endif
 #ifndef DISABLE_CHARGING
-
-			if (batteries[i].pwm == PWM_OFF)
+			if (batteries[i].state == EBatteryState::PreDischarge)
 			{
-				batteries[i].pwm = PWM_ON;
-				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
-				break;
-			}
-			else if (batteries[i].voltage < m_cfPreDischargeVoltage)
-			{
-				batteries[i].pwm = PWM_OFF;
-				batteries[i].state = EBatteryState::Charging;
-			}
-			else
-			{
-				break;
+				if (batteries[i].pwm == PWM_OFF)
+				{
+					batteries[i].pwm = PWM_ON;
+					pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+					break;
+				}
+				else if (batteries[i].voltage < m_cfPreDischargeVoltage)
+				{
+					batteries[i].pwm = PWM_OFF;
+					batteries[i].state = EBatteryState::Charging;
+				}
+				else
+				{
+					break;
+				}
 			}
 #else
 			batteries[i].state = EBatteryState::Charging;
@@ -710,21 +743,25 @@ void UpdateState()
 			Serial.println();
 #endif
 #ifndef DISABLE_CHARGING
-
-			if (batteries[i].pwm == PWM_OFF)
+			if (batteries[i].state == EBatteryState::Charging)
 			{
-				batteries[i].pwm = PWM_CHARGE;
-				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+				if (batteries[i].pwm == PWM_OFF)
+				{
+					batteries[i].pwm = PWM_CHARGE;
+					pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+					break;
+				}
+				else if (batteries[i].voltage >= m_cfBatteryDischargeVoltage)//true)//TODO: ADD triger for charged completed (STDBY pin on TP4056)
+				{
+					batteries[i].pwm = PWM_OFF;
+					pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
+					batteries[i].state = EBatteryState::Resistance;
+				}
+				else
+				{
+					break;
+				}
 			}
-			else if (true)//TODO: ADD triger for charged completed (STDBY pin on TP4056)
-			{
-				batteries[i].pwm = PWM_OFF;
-				pwmDriver[batteries[i].pwmPinsData.id].setPWM(batteries[i].pwmPinsData.chanel, 0, batteries[i].pwm);
-				batteries[i].state = EBatteryState::Resistance;
-			}
-
-			break;
-
 #else
 			batteries[i].state = EBatteryState::Resistance;
 #endif
@@ -820,7 +857,7 @@ void UpdateState()
 					break;
 				}
 
-				if (batteries[i].resistanceData.currentMesurement < 2 && batteries[i].resistanceData.timer <= millis())
+				if (batteries[i].resistanceData.currentMesurement < 2 && batteries[i].resistanceData.timer <= millis() && (batteries[i].pwm%PWM_I_1)==1)
 				{
 					batteries[i].state = EBatteryState::Resistance;
 				}
@@ -841,9 +878,8 @@ void UpdateState()
 				Serial.print(batteries[i].pwm);
 				Serial.println();
 #endif
+				break;
 			}
-
-			break;
 		}
 		case EBatteryState::Recharging:
 		{

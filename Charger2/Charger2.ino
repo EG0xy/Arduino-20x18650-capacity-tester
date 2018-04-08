@@ -112,6 +112,7 @@ enum class EKeyID :int
 
 EKeyID activeButton = EKeyID::None;
 bool InputActive = false;
+static unsigned int nFinishedCount = 0;
 
 #define LCD_ON -1
 #define LCD_OFF -2
@@ -247,7 +248,7 @@ float getVoltage(const MuxData& pinData, float voltageMultiplierValue = 1.0) {
 	}
 	sample = sample / (float)BAT_READ_COUNT;
 
-	return (float)sample * voltageMultiplierValue *((readVcc() * 0.001f) / 1023.0);
+	return (float)sample * voltageMultiplierValue *((readVcc() * 0.001f) / 1024.0);
 }
 
 float getCellTemp(const MuxData& pinData, int t = 1)
@@ -270,7 +271,7 @@ float getCellTemp(const MuxData& pinData, int t = 1)
 	R2 = R1 * (1023.0 / (float)analogRead(muxSig[pinData.id]) - 1.0);
 	logR2 = log(R2);
 	T = (1.0 / (c1 + c2 * logR2 + c3 * logR2*logR2*logR2));
-	return (float)(T - 276.15);// added -2 to get close to temperature, but formula should be adopted to thermistor instead!!
+	return (float)(T - 276.15-(pinData.chanel==10?14:0));// added -2 to get close to temperature, but formula should be adopted to thermistor instead!!
 }
 unsigned long lastUpdate = 0;
 void UpdateBatteries()
@@ -602,8 +603,87 @@ void ResetLastInfo()
 	}
 }
 
+int PrioritySelect(int step, int nLast, bool bNoFilter = false)
+{
+	int result = max(nLast, 0);
+
+	if (nLast >= 0)
+	{
+		ResetLastInfo();
+		result = result + step;
+	}
+
+	if (bNoFilter)
+	{
+		if (result < 0)
+		{
+			result = BAT_COUNT - 1;
+		}
+		else if (result >= BAT_COUNT)
+		{
+			result = 0;
+		}
+		return result;
+	}
+
+	int nCount = 0;
+	bool bFound = false;
+	EBatteryState searchState = EBatteryState::Finished;
+#ifdef DEBUG
+	Serial.print("Entering Priority Selecttion loop");
+	Serial.println();
+#endif
+	do {
+		nCount += 1;
+
+		//checking search bounds
+		if (result < 0)
+		{
+			result = BAT_COUNT - 1;
+		}
+		else if (result >= BAT_COUNT)
+		{
+			result = 0;
+		}
+
+		if (batteries[result].state == searchState)
+		{
+			bFound = true;
+		}
+		else
+		{
+			result = result + step;
+		}
+
+		if (!bFound && nCount == BAT_COUNT && searchState > EBatteryState::Low)
+		{
+			searchState = (EBatteryState)((int)searchState - 1);
+#ifdef DEBUG
+			Serial.print("Priority Selecttion loop: switch to ");
+			Serial.print((int)searchState);
+			Serial.print(" state");
+			Serial.println();
+#endif
+			nCount = 0;
+		}
+
+	} while (!bFound && nCount <= BAT_COUNT);
+
+	if (!bFound)
+		result = LCD_ON;
+
+#ifdef DEBUG
+	Serial.print("Priority Selecttion loop: returning ");
+	Serial.print(result);
+	Serial.println();
+#endif
+
+	return result;
+}
+
 void UpdateState()
 {
+	nFinishedCount = 0;
 	for (size_t i = 0; i < BAT_COUNT; ++i)
 	{
 		bool reinserted =	bLastInfoTrigered && 
@@ -666,6 +746,10 @@ void UpdateState()
 #ifndef DISABLE_CHARGING
 				if (batteries[i].voltage >= m_cfBatteryCutOffVoltage) {
 					batteries[i].state = EBatteryState::Charging;
+					
+					//using this to delay the charge switching for correct voltage readings of TP 4056
+					batteries[i].resistanceData.timer = millis() + RESISTANCE_TIMER;
+
 
 					if (!bLastInfoTrigered)
 					{
@@ -724,8 +808,14 @@ void UpdateState()
 				Serial.println();
 	#endif
 	#ifndef DISABLE_CHARGING
+
 				if (batteries[i].state == EBatteryState::Charging)
 				{
+					if (batteries[i].resistanceData.timer > millis())
+						break;
+
+					batteries[i].resistanceData.timer = 0;
+
 					if (batteries[i].pwm != PWM_CHARGE)
 					{
 						batteries[i].pwm = PWM_CHARGE;
@@ -749,7 +839,7 @@ void UpdateState()
 			}
 			case EBatteryState::Resistance:
 			{
-				if (batteries[i].resistanceData.timer == 0)
+				if (batteries[i].resistanceData.timer <= 0)
 				{
 					batteries[i].resistanceData.timer = millis() + RESISTANCE_TIMER;
 				
@@ -909,72 +999,10 @@ void UpdateState()
 			default:
 				break;
 		}
+
+		if (batteries[i].state == EBatteryState::Finished)
+			++nFinishedCount;
 	}
-}
-
-int PrioritySelect(int step, int nLast)
-{
-	int result = max(nLast, 0);
-	
-	if (nLast >= 0)
-	{
-		ResetLastInfo();
-		result = result + step;
-	}
-
-	int nCount = 0;
-	bool bFound = false;
-	EBatteryState searchState = EBatteryState::Finished;
-#ifdef DEBUG
-	Serial.print("Entering Priority Selecttion loop");
-	Serial.println();
-#endif
-	do {
-		nCount += 1;
-
-		//checking search bounds
-		if (result < 0)
-		{
-			result = BAT_COUNT - 1;
-		}
-		else if (result >= BAT_COUNT)
-		{
-			result = 0;
-		}
-
-		if (batteries[result].state == searchState)
-		{
-			bFound = true;
-		}
-		else
-		{
-			result = result + step;
-		}
-
-		if (!bFound && nCount == BAT_COUNT && searchState > EBatteryState::Low)
-		{
-			searchState = (EBatteryState)((int)searchState - 1);
-#ifdef DEBUG
-			Serial.print("Priority Selecttion loop: switch to ");
-			Serial.print((int)searchState);
-			Serial.print(" state");
-			Serial.println();
-#endif
-			nCount = 0;
-		}
-
-	} while (!bFound && nCount <= BAT_COUNT);
-
-	if (!bFound)
-		result = LCD_ON;
-
-#ifdef DEBUG
-	Serial.print("Priority Selecttion loop: returning ");
-	Serial.print(result);
-	Serial.println();
-#endif
-
-	return result;
 }
 
 void UpdateInput()
@@ -1068,7 +1096,7 @@ void UpdateInput()
 					bt = 0;
 #else        
 				EnableLCD();//refreshing timer
-				lastScreen = PrioritySelect(1, lastScreen);
+				lastScreen = PrioritySelect(1, lastScreen, nFinishedCount == 0);
 #endif
 				break;
 			}
@@ -1085,7 +1113,7 @@ void UpdateInput()
 					bt = BAT_COUNT - 1;
 #else 
 				EnableLCD();//refreshing timer
-				lastScreen = PrioritySelect(-1, lastScreen);
+				lastScreen = PrioritySelect(-1, lastScreen, nFinishedCount == 0);
 #endif
 				break;
 			}

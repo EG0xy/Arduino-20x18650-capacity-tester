@@ -1,4 +1,5 @@
-#pragma once
+#ifndef BATTERY_H
+#define BATTERY_H
 
 #include "PWM_Drive.h"
 
@@ -39,7 +40,7 @@ struct Battery {
 
 	float temperature;
 	float capacity;
-	float voltage;
+	float voltage, calibrateV;
 	float loadVoltage;
 
 	unsigned int pwm;
@@ -55,7 +56,7 @@ struct Battery {
 	//	9 - 15	MUX 2
 	//	0 - 12	MUX 3 - Voltage read out from ressistor
 
-	void init()
+	void init(float voltageCalibrate)
 	{
 		static int muxTEMPNum = 0;
 		static int muxCH_TEMPNum = 0;
@@ -65,6 +66,8 @@ struct Battery {
 		static int muxCH_RVNum = 9;
 		static int pwmPICNum = 0;
 		static int pwmCHNum = 0;
+
+		calibrateV = voltageCalibrate;
 
 		if (muxCH_TEMPNum >= MUX_CH_COUNT)
 		{
@@ -142,7 +145,18 @@ struct Battery {
 		}
 		sample = sample / (float)BAT_READ_COUNT;
 
-		(readState == Voltage ? voltage:loadVoltage) = (float)sample *((readVcc() * 0.001f) / (readState == Voltage ? 512.f: 1024.0));
+		float reading = (float)sample *((readVcc() * 0.001f) / 1023.0);
+
+		if (readState == Voltage)
+		{
+			voltage = reading * 2.f;
+			voltage += voltage * calibrateV;
+		}
+		else
+		{
+			loadVoltage = reading;
+			loadVoltage += loadVoltage * RESISTANCE_MULTIPLIER;
+		}
 	};
 
 	void updateTemp()
@@ -152,28 +166,32 @@ struct Battery {
 		float sample = 0.f;
 		float R1 = 10000.f;
 		float logR2, R2, T, Tc, Tf;
-		float c1 = 1.009249522e-03, c2 = 2.378405444e-04, c3 = 2.019202697e-07;
+		//float c1 = 1.009249522e-03, c2 = 2.378405444e-04, c3 = 2.019202697e-07;
+		float c1 = 0.001129148, c2 = 0.000234125, c3 = 0.0000000876741;
 
 		R2 = R1 * (1023.f / (float)analogRead(muxSig[thermalReadData.deviceId]) - 1.0);
 		logR2 = log(R2);
 		T = (1.0 / (c1 + c2 * logR2 + c3 * logR2*logR2*logR2));
-		temperature = (float)(T - 276.15 - (thermalReadData.channel == 10 ? 14 : 0));// added -2 to get close to temperature, but formula should be adopted to thermistor instead!!
+		temperature = (float)(T - 273.15);// -(thermalReadData.channel == 10 ? 14 : 0));// added -2 to get close to temperature, but formula should be adopted to thermistor instead!!
 	};
 
 	void UpdateCapacity()
 	{
 		unsigned long nDeltaTime = millis() - lastTime;
-		capacity += loadVoltage * (float)nDeltaTime / 3600.f;
+		capacity += loadVoltage * 1000.f * (float)nDeltaTime / 3600.f;
 		lastTime += nDeltaTime;
 	};
 
-	void adjustPWM(float current) {
-		if (current > 0 && current != dischargeCurrent)
+	void adjustPWM(float _current = -1.f) {
+		if (_current < 0)
+			_current = loadVoltage * 1000.f;
+
+		if (_current > 0 && _current != dischargeCurrent)
 		{
 			int newPwm = pwm;
 			//for faster current equality
-			int currentDiff = dischargeCurrent - current;
-			int pwmChange = map((int)(abs(currentDiff) *  0.2f), 0, 2000, 0, MAX_PWM);
+			int currentDiff = round(dischargeCurrent - _current);
+			//int pwmChange = map((int)(abs(currentDiff) *  0.2f), 0, 2000, 0, MAX_PWM);
 
 			if (currentDiff > 0 && newPwm < MAX_PWM)
 			{
@@ -197,3 +215,4 @@ struct Battery {
 		}
 	};
 };
+#endif; //BATTERY_H

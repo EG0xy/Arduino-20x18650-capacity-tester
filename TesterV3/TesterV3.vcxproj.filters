@@ -15,34 +15,11 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="__vm\.V3.vsarduino.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Predefined.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Mux.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="PWM_Drive.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="LCD.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Battery.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Debug.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Input.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
+    <None Include="TesterV3.ino" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="V3.ino">
-      <Filter>Source Files</Filter>
-    </None>
+    <ClInclude Include="__vm\.TesterV3.vsarduino.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

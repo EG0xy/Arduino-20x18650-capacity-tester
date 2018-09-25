@@ -43,7 +43,7 @@
 //#define USE_SERIAL
 //#define DISABLE_CHARGING
 
-//#define DEBUG
+#define DEBUG
 
 //#define USE_RECHARGE
 
@@ -69,21 +69,23 @@
 
 #define PWM_OFF 1023//NO charge AND NO DISCHARGE
 //#define PWM_CHARGE 0
-//#define PWM_ON 3115 //~1000mA
+#define PWM_ON 3115 //~1000mA
 //#define PWM_I_1 2127 // ~300mA
 //#define PWM_I_2 2950 // ~1000mA
 //#define PWM_IA_1 300 //mA
 //#define PWM_IA_2 1000 //mA
 
 //Button input
-//#define INPUT_PIN A0
+#define INPUT_PIN A0
 
+
+#define RES_VALUE 1.1f
 //#define RESISTANCE_TIMER 3000 //waits for millliseconds until another mesurement for resistance calculation
 
 //#define RESISTANCE_MULTIPLIER 0.01056421f //1000mA mesured
 
 #define BAT_COUNT 20
-#define BAT_READ_COUNT 10
+#define BAT_READ_COUNT 5
 //#ifdef DISABLE_CHARGING
 //const float m_cfBatteryDischargeVoltage = 4.1;//V
 //#else
@@ -94,24 +96,24 @@
 constexpr float m_cfDischargeCurrent = 1000.f;//mA
 static int currentMUX = 0;
 
-//#ifdef DEBUG
-//static int bt = 0;
-//static int pwmOffset = 0;
-//static bool bPWMTogle = false;
-//#endif // DEBUG
+#ifdef DEBUG
+static int bt = 0;
+static int pwmOffset = 0;
+static bool bPWMTogle = false;
+#endif // DEBUG
 
-//enum class EKeyID :int
-//{
-//	None = -1,
-//	Right = 0,
-//	Left,
-//	Up,
-//	Down,
-//	Select
-//};
+enum class EKeyID :int
+{
+	None = -1,
+	Right = 0,
+	Left,
+	Up,
+	Down,
+	Select
+};
 
-//EKeyID activeButton = EKeyID::None;
-//bool InputActive = false;
+EKeyID activeButton = EKeyID::None;
+bool InputActive = false;
 //static unsigned int nFinishedCount = 0;
 
 #define LCD_ON -1
@@ -231,25 +233,25 @@ Battery batteries[BAT_COUNT];
 //}
 
 //read voltage from analog pins
-float getVoltage(const MuxData& pinData, float voltageMultiplierValue = 1.0) {
-	float sample = 0.0;
-	//Enabling the proper multiplexer for read sequences
-	if (currentMUX != pinData.id)
-	{
-		digitalWrite(muxEN[currentMUX], HIGH);
-		digitalWrite(muxEN[pinData.id], LOW);
-		currentMUX = pinData.id;
-	}
-	mux.channel(pinData.chanel);
-	delay(1);
-	//analogRead(muxSig[pinData.id]);//to reduce errors for bad reads skip first read
-	for (uint8_t i = 0; i < BAT_READ_COUNT; i++) {
-		sample += analogRead(muxSig[pinData.id]);
-	}
-	sample = sample / (float)BAT_READ_COUNT;
-
-	return (float)sample * voltageMultiplierValue *((readVcc() * 0.001f) / 1024.0);
-}
+//float getVoltage(const MuxData& pinData, float voltageMultiplierValue = 1.0) {
+//	float sample = 0.0;
+//	//Enabling the proper multiplexer for read sequences
+//	if (currentMUX != pinData.id)
+//	{
+//		digitalWrite(muxEN[currentMUX], HIGH);
+//		digitalWrite(muxEN[pinData.id], LOW);
+//		currentMUX = pinData.id;
+//	}
+//	mux.channel(pinData.chanel);
+//	delay(1);
+//	//analogRead(muxSig[pinData.id]);//to reduce errors for bad reads skip first read
+//	for (uint8_t i = 0; i < BAT_READ_COUNT; i++) {
+//		sample += analogRead(muxSig[pinData.id]);
+//	}
+//	sample = sample / (float)BAT_READ_COUNT;
+//
+//	return (float)sample * voltageMultiplierValue *((readVcc() * 0.001f) / 1024.0);
+//}
 
 //float getCellTemp(const MuxData& pinData, int t = 1)
 //{
@@ -337,35 +339,43 @@ float getVoltage(const MuxData& pinData, float voltageMultiplierValue = 1.0) {
 //	batteries[batID].lasTime += nDeltaTime;
 //}
 
-//void SetPWM(float current, int batID) {
-//	if (current > 0 && current != batteries[batID].dischargeCurrent)
-//	{
-//		int newPwm = batteries[batID].pwm;
-//		//for faster current equality
-//		int currentDiff = batteries[batID].dischargeCurrent - current;
-//		int pwmChange = map((int)(abs(currentDiff) *  0.2f), 0, 2000, 0, MAX_PWM);
-//
-//		if (currentDiff > 0 && newPwm < MAX_PWM)
-//		{
-//			newPwm += 1;// max(pwmChange, 1);
-//		}
-//		else if (currentDiff < 0 && newPwm > 0)
-//		{
-//			newPwm -= 1;// max(pwmChange, 1);
-//		}
-//
-//		if (newPwm > MAX_PWM)
-//			newPwm = MAX_PWM;
-//		if (newPwm < PWM_OFF)
-//			newPwm = PWM_OFF;
-//
-//		if (batteries[batID].pwm != newPwm)
-//		{
-//			batteries[batID].pwm = newPwm;
-//			pwmDriver[batteries[batID].pwmPinsData.id].setPWM(batteries[batID].pwmPinsData.chanel, 0, batteries[batID].pwm);
-//		}
-//	}
-//}
+void SetPWM(int batID, int setCurrent = 0) {
+
+	int current = batteries[batID].loadVoltage * 1000 / RES_VALUE;
+
+	if (setCurrent == 0)
+		setCurrent = batteries[batID].dischargeCurrent;
+
+	if(setCurrent > 0 && setCurrent != current)
+	{
+		int newPwm = batteries[batID].pwm;
+		//for faster current equality
+		int currentDiff = setCurrent - current;
+		//int pwmChange = map((int)(abs(currentDiff) *  0.2f), 0, 2000, 0, MAX_PWM);
+
+		if (currentDiff > 0 && newPwm < MAX_PWM)
+		{
+			newPwm += 1;// max(pwmChange, 1);
+		}
+		else if (currentDiff < 0 && newPwm > 0)
+		{
+			newPwm -= 1;// max(pwmChange, 1);
+		}
+
+		if (newPwm > MAX_PWM)
+			newPwm = MAX_PWM;
+		if (newPwm < PWM_OFF)
+			newPwm = PWM_OFF;
+
+		if (batteries[batID].pwm != newPwm)
+		{
+			batteries[batID].pwm = newPwm;
+			pwmDriver[batteries[batID].pwmPinsData.id].setPWM(batteries[batID].pwmPinsData.chanel, 0, batteries[batID].pwm);
+		}
+	}
+
+	
+}
 
 long readVcc() {
 	// Read 1.1V reference against AVcc
@@ -463,7 +473,7 @@ void setup() {
 	digitalWrite(MUX_4_EN, LOW);
 
 	//buttons
-	//pinMode(A0, INPUT);
+	pinMode(A0, INPUT);
 
 	//PWM
 	for (size_t i = 0; i < PWM_DRIVER_COUNT; i++)
@@ -541,41 +551,114 @@ void setup() {
 //	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 //}
 
-void loop() {
-	lcd.setCursor(0, 0);
-	float vcc = readVcc();
-	lcd.print(vcc);
-	static float lastSample = 0.0;
-	static bool sampled = false;
+static int readings[BAT_READ_COUNT];
+
+constexpr float c_VoltageParts = 1.f / 1023;
+
+float getVoltage(const MuxData& pinData, float voltageMultiplierValue = 1.0) {
 	float sample = 0.0;
-	bool bSwitched = false;
 	//Enabling the proper multiplexer for read sequences
-	if (currentMUX != batteries[19].batterieReadPinsData.id)
+	if (currentMUX != pinData.id)
 	{
 		digitalWrite(muxEN[currentMUX], HIGH);
-		digitalWrite(muxEN[batteries[19].batterieReadPinsData.id], LOW);
-		currentMUX = batteries[19].batterieReadPinsData.id;
-		bSwitched = true;
+		digitalWrite(muxEN[pinData.id], LOW);
+		currentMUX = pinData.id;
+	}
+	mux.channel(pinData.chanel);
+	delay(1);
+	int count = 0;
+	//analogRead(muxSig[pinData.id]);//to reduce errors for bad reads skip first read
+	//delay(1);
+	for (uint8_t i = 0; i < BAT_READ_COUNT; i++) {
+		readings[i] = 0;
+		readings[i] = analogRead(muxSig[pinData.id]);
+
+		count++;
+		if (count > 2)
+		{
+			if (readings[i] >= sample * 0.95f)
+			{
+				sample += readings[i];
+
+				sample /= 2.f;
+			}
+			else
+			{
+				count--;
+			}
+		}else
+		{
+			sample += readings[i];
+
+			sample /= (float)count;
+		}
 	}
 
-	String str;
+	return (float)sample * voltageMultiplierValue *((readVcc() * 0.001f) * c_VoltageParts);
+}
 
-	if (bSwitched)
+int nID = 19;
+
+void loop() {
+
+	UpdateInput();
+	
+	lcd.setCursor(0, 0);
+	batteries[nID].voltage = getVoltage(batteries[nID].batterieReadPinsData, 1.995f);
+	lcd.print(batteries[nID].voltage);
+
+	lcd.setCursor(0, 1);
+	batteries[nID].loadVoltage = getVoltage(batteries[nID].ressistorReadPinsData, 1.138f);
+	lcd.print(batteries[nID].loadVoltage);
+
+	if (bPWMTogle)
+	{
+		lcd.setCursor(8, 0);
+		lcd.print("LOAD");
+		float current = batteries[nID].loadVoltage / RES_VALUE;
+		lcd.setCursor(8, 1);
+		lcd.print(current*1000.f);
+
+		SetPWM(nID, 1000);
+	}
+	delay(20);
+
+	//static float lastSample = 0.0;
+	//static bool sampled = false;
+	//float sample = 0.0;
+	//bool bSwitched = false;
+
+	//
+	////Enabling the proper multiplexer for read sequences
+	//if (currentMUX != batteries[nID].batterieReadPinsData.id)
+	//{
+	//	digitalWrite(muxEN[currentMUX], HIGH);
+	//	digitalWrite(muxEN[batteries[nID].batterieReadPinsData.id], LOW);
+	//	currentMUX = batteries[nID].batterieReadPinsData.id;
+	//	bSwitched = true;
+	//}
+
+	//String str;
+
+	/*if (bSwitched)
 		str = "yes";
 	else
-		str = "no";
-	Serial.print("Switched: ");
+		str = "no";*/
+	/*Serial.print("Switched: ");
 	Serial.print(str);
-	Serial.print("\t");
-	Serial.print("VCC: ");
-	Serial.print(vcc);
-	Serial.print("\t");
+	Serial.print("\t");*/
+	//Serial.print("VCC: ");
+	//Serial.print(readVcc());
+	//Serial.print("\t");
 
-	mux.channel(batteries[19].batterieReadPinsData.chanel);
-	delay(1);
-	analogRead(muxSig[batteries[19].batterieReadPinsData.id]);//to reduce errors for bad reads skip first read
+	//mux.channel(batteries[nID].batterieReadPinsData.chanel);
+	//delay(1); 
 	//for (uint8_t i = 0; i < BAT_READ_COUNT; i++) {
-		sample = analogRead(muxSig[batteries[19].batterieReadPinsData.id]);
+	//	analogRead(muxSig[batteries[nID].batterieReadPinsData.id]);//to reduce errors for bad reads skip first read
+	//}
+	////for (uint8_t i = 0; i < BAT_READ_COUNT; i++) {
+	//int readings[]
+	//sample = analogRead(muxSig[batteries[nID].batterieReadPinsData.id]);
 
 		/*if (!sampled && sample > 0.1f)
 		{
@@ -594,23 +677,22 @@ void loop() {
 
 	//return (float)sample*((readVcc() * 0.001f) / 1024.0);
 
-		Serial.print("Sample: ");
+		/*Serial.print("Sample: ");
 		Serial.print(sample*2.f);
-		Serial.print("\t");
+		Serial.print("\t");*/
 
-		float voltage = sample * 2.f*vcc*0.001f / 1023.f;
-		Serial.print("V: ");
+		//float voltage = sample * 2.f*vcc*0.001f / 1023.f;
+		/*Serial.print("V: ");
 		Serial.print(voltage);
-		Serial.println();
+		Serial.println();*/
 
-	lcd.setCursor(8, 0);
+	/*lcd.setCursor(8, 0);
 	lcd.print(sample*2.f);
 	lcd.setCursor(0, 1);
-	lcd.print(voltage);
+	lcd.print(voltage);*/
 
-	delay(500);
 	//lcd.setCursor(5, 0);
-	//lcd.print(getVoltage(batteries[19].batterieReadPinsData));
+	//lcd.print(getVoltage(batteries[nID].batterieReadPinsData));
 
 //	UpdateBatteries();
 //#ifndef DEBUG
@@ -1081,146 +1163,158 @@ void loop() {
 //	}
 //}
 //
-//void UpdateInput()
-//{
-//	//Disable controlls for when battery is removed
-//	if (bLastInfoTrigered && lastScreen > LCD_ON) return;
-//
-//	int readkey = analogRead(0);
-//
-//	if (activeButton == EKeyID::None)
-//	{
-//		if (readkey < 30) {
-//			activeButton = EKeyID::Right;
-//		}
-//		if (readkey >= 30 && readkey < 160) {
-//			activeButton = EKeyID::Up;
-//		}
-//		if (readkey >= 160 && readkey < 400) {
-//			activeButton = EKeyID::Down;
-//		}
-//		if (readkey >= 400 && readkey < 550) {
-//			activeButton = EKeyID::Left;
-//		}
-//		if (readkey >= 550 && readkey < 800) {
-//			activeButton = EKeyID::Select;
-//		}
-//	}
-//	else if (readkey >= 740) {
-//		InputActive = false;
-//		activeButton = EKeyID::None;
-//#ifdef DEBUG
-//		Serial.print("All released");
-//		Serial.println();
-//#endif
-//	}
-//
-//	if (activeButton != EKeyID::None)
-//	{
-//		EnableLCD();
-//
-//		//if (lastScreen <= LCD_ON)
-//		//{
-//		//	InputActive = true;
-//		//	lastScreen = PrioritySelect(1, lastScreen);
-//		//	return;
-//		//}
-//	}
-//
-//	if (!InputActive)
-//	{
-//		switch (activeButton)
-//		{
-//		case EKeyID::Right:
-//		{
-//			InputActive = true;
-//
-//
-//#ifdef DEBUG
-//			Serial.print("RIGHT");
-//			Serial.println();
-//			pwmOffset += 50;
-//
-//			if (PWM_OFF + pwmOffset > MAX_PWM)
-//				pwmOffset = MAX_PWM - PWM_OFF;
-//#endif
-//			break;
-//		}
-//		case EKeyID::Left:
-//		{
-//			InputActive = true;
-//#ifdef DEBUG
-//			Serial.print("LEFT");
-//			Serial.println();
-//			pwmOffset -= 50;
-//
-//			if (PWM_OFF + pwmOffset < 0)
-//				pwmOffset = -PWM_OFF;
-//#endif
-//			break;
-//		}
-//		case EKeyID::Up:
-//		{
-//			InputActive = true;
-//#ifdef DEBUG
-//			Serial.print("UP");
-//			Serial.println();
-//
-//			bt += 1;
-//
-//			if (bt >= BAT_COUNT)
-//				bt = 0;
-//#else        
-//			EnableLCD();//refreshing timer
-//			lastScreen = PrioritySelect(1, lastScreen, nFinishedCount == 0);
-//#endif
-//			break;
-//		}
-//		case EKeyID::Down:
-//		{
-//			InputActive = true;
-//#ifdef DEBUG
-//			Serial.print("DOWN");
-//			Serial.println();
-//
-//			bt -= 1;
-//
-//			if (bt < 0)
-//				bt = BAT_COUNT - 1;
-//#else 
-//			EnableLCD();//refreshing timer
-//			lastScreen = PrioritySelect(-1, lastScreen, nFinishedCount == 0);
-//#endif
-//			break;
-//		}
-//		case EKeyID::Select:
-//		{
-//			InputActive = true;
-//#ifdef DEBUG
-//			Serial.print("SELECT");
-//			Serial.println();
-//
-//			if (!bPWMTogle)
-//			{
-//				pwmOffset = -PWM_OFF;
-//				bPWMTogle = true;
-//			}
-//			else
-//			{
-//				pwmOffset = 0;
-//				bPWMTogle = false;
-//			}
-//
-//#endif
-//			break;
-//		}
-//		default:
-//		{
-//		}
-//
-//		};
-//	}
-//}
+void UpdateInput()
+{
+	//Disable controlls for when battery is removed
+	//if (bLastInfoTrigered && lastScreen > LCD_ON) return;
+
+	int readkey = analogRead(0);
+
+	if (activeButton == EKeyID::None)
+	{
+		if (readkey < 30) {
+			activeButton = EKeyID::Right;
+		}
+		if (readkey >= 30 && readkey < 160) {
+			activeButton = EKeyID::Up;
+		}
+		if (readkey >= 160 && readkey < 400) {
+			activeButton = EKeyID::Down;
+		}
+		if (readkey >= 400 && readkey < 550) {
+			activeButton = EKeyID::Left;
+		}
+		if (readkey >= 550 && readkey < 800) {
+			activeButton = EKeyID::Select;
+		}
+	}
+	else if (readkey >= 800) {
+		InputActive = false;
+		activeButton = EKeyID::None;
+#ifdef DEBUG
+		Serial.print("All released");
+		Serial.println();
+#endif
+	}
+
+	
+
+	if (activeButton == EKeyID::None)
+		return;
+
+	
+	//{
+	//	EnableLCD();
+
+	//	//if (lastScreen <= LCD_ON)
+	//	//{
+		//InputActive = true;
+	//	//	lastScreen = PrioritySelect(1, lastScreen);
+	//	//	return;
+	//	//}
+	//}
+
+	if (!InputActive)
+	{
+		switch (activeButton)
+		{
+		case EKeyID::Right:
+		{
+			InputActive = true;
+
+
+#ifdef DEBUG
+			Serial.print("RIGHT");
+			Serial.println();
+			pwmOffset += 50;
+
+			if (PWM_OFF + pwmOffset > MAX_PWM)
+				pwmOffset = MAX_PWM - PWM_OFF;
+#endif
+			break;
+		}
+		case EKeyID::Left:
+		{
+			InputActive = true;
+#ifdef DEBUG
+			Serial.print("LEFT");
+			Serial.println();
+			pwmOffset -= 50;
+
+			if (PWM_OFF + pwmOffset < 0)
+				pwmOffset = -PWM_OFF;
+#endif
+			break;
+		}
+		case EKeyID::Up:
+		{
+			InputActive = true;
+#ifdef DEBUG
+			Serial.print("UP");
+			Serial.println();
+
+			bt += 1;
+
+			if (bt >= BAT_COUNT)
+				bt = 0;
+#else        
+			EnableLCD();//refreshing timer
+			lastScreen = PrioritySelect(1, lastScreen, nFinishedCount == 0);
+#endif
+			break;
+		}
+		case EKeyID::Down:
+		{
+			InputActive = true;
+#ifdef DEBUG
+			Serial.print("DOWN");
+			Serial.println();
+
+			bt -= 1;
+
+			if (bt < 0)
+				bt = BAT_COUNT - 1;
+#else 
+			EnableLCD();//refreshing timer
+			lastScreen = PrioritySelect(-1, lastScreen, nFinishedCount == 0);
+#endif
+			break;
+		}
+		case EKeyID::Select:
+		{
+			InputActive = true;
+#ifdef DEBUG
+			Serial.print("SELECT");
+			Serial.println();
+
+			if (!bPWMTogle)
+			{
+				//pwmOffset = -PWM_OFF;
+				bPWMTogle = true;
+
+				batteries[nID].pwm = PWM_ON;
+				pwmDriver[batteries[nID].pwmPinsData.id].setPWM(batteries[nID].pwmPinsData.chanel, 0, PWM_ON);
+			}
+			else
+			{
+				//pwmOffset = 0;
+				bPWMTogle = false;
+				lcd.clear();
+
+				batteries[nID].pwm = PWM_OFF;
+				pwmDriver[batteries[nID].pwmPinsData.id].setPWM(batteries[nID].pwmPinsData.chanel, 0, PWM_OFF);
+			}
+
+#endif
+			break;
+		}
+		default:
+		{
+		}
+
+		};
+	}
+}
 
 //void UpdateDisplay()
 //{

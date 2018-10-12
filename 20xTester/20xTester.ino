@@ -11,6 +11,8 @@
 
 //#define USE_SERIAL//_INFO
 //#define DEBUG
+static int timer = 20000;
+
 
 #ifdef DEBUG
 static int bt = 19;
@@ -52,7 +54,7 @@ struct RData {
 #define PWM_CHARGE 0
 #define PWM_ON 3135 // ~1000mA
 #define MAX_PWM 4095
-#define PWM_OFF 1023
+#define PWM_OFF 1523
 #define PWM_I_1 2306 // ~300mA
 #define PWM_I_2 3135 // ~1000mA
 
@@ -196,6 +198,8 @@ void setup()
 	//	UpdateDisplay();
 	lcd.setBacklight(LOW);
 
+	timer += millis();
+
 	//*********************** Multiplexer HC4067 setup
 	pinMode(MUX_1_SIG, INPUT);
 	pinMode(MUX_2_SIG, INPUT);
@@ -230,8 +234,16 @@ void setup()
 	{
 		pwmDriver[i].begin();
 		pwmDriver[i].setPWMFreq(1600);
-		for (size_t ch = 0; ch < PWM_CH_COUNT; ch++)
+		delay(1000);
+		for (size_t ch = 0; ch < PWM_CH_COUNT - (PWM_CH_COUNT - 4) * i; ch++)
 		{
+#ifdef USE_SERIAL
+			Serial.print("PWM : ");
+			Serial.print(i + 1);
+			Serial.print(" - ");
+			Serial.print(ch + 1);
+			Serial.println();
+#endif
 			pwmDriver[i].setPWM(ch, 0, PWM_OFF);
 		}
 	}
@@ -687,7 +699,7 @@ void UpdateState()
 					Serial.print(batteries[i].voltageData.fValue);
 					Serial.print(" V");
 					Serial.print(" Load: ");
-					Serial.print(batteries[i].loadData.fValue;// / RES_VALUE);
+					Serial.print(batteries[i].loadData.fValue);// / RES_VALUE);
 					Serial.print(" V");
 					Serial.print(" PWM: ");
 					Serial.print(batteries[i].pwmData.iValue);
@@ -864,7 +876,7 @@ void UpdateState()
 				Serial.print(" --- V : ");
 				Serial.print(batteries[i].voltageData.fValue);
 				Serial.print(" --- A : ");
-				Serial.print(batteries[i].loadData.fValue;// / RES_VALUE);
+				Serial.print(batteries[i].loadData.fValue);// / RES_VALUE);
 				Serial.print(" --- PWM : ");
 				Serial.print(batteries[i].pwmData.iValue);
 				Serial.println();
@@ -991,6 +1003,14 @@ void UpdateDisplay()
 	//	//EnableLCD();
 	//}
 	//else
+	if (timer > millis())
+	{
+		lcd.clear();
+		lcd.setCursor(2, 1);
+		lcd.print("INITIALIZING");
+		return;
+	}
+
 	if (lastScreen >= 0)// && lcdTimeOut > millis()) // Display the last active battery for some time then reset to MAIN screen
 	{
 		if (batteries[lastScreen].resistanceData.timer > millis() && batteries[lastScreen].resistanceData.timer - millis() > RESISTANCE_TIMER)
@@ -1128,13 +1148,16 @@ void UpdateDisplay()
 	//	//lcd.setBacklight(HIGH);
 	//}
 }
+
 // Add the main program code into the continuous loop() function
 void loop()
 {
 	UpdateInput();
 	UpdateBatterie();
 #ifndef DEBUG
-	UpdateState();
+	if(timer < millis())
+		UpdateState();
+
 	UpdateDisplay();
 #else
 	for (int i = 0; i < BAT_COUNT; ++i)

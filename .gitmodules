@@ -1,0 +1,3 @@
+[submodule "Referance/brettwatty/Arduino-8x-PCB-Smart-Charger-Discharger"]
+	path = Referance/brettwatty/Arduino-8x-PCB-Smart-Charger-Discharger
+	url = https://github.com/brettwatty/Arduino-8x-PCB-Smart-Charger-Discharger.git

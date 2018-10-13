@@ -11,13 +11,18 @@
 
 //#define USE_SERIAL//_INFO
 //#define DEBUG
-static int timer = 20000;
+#define DEBUG_SELECT
+static int timer = 30000;
 
 
 #ifdef DEBUG
 static int bt = 19;
 static bool bPWMTogle = false;
 static bool bChargeTogle = false;
+#else
+#define SCROLL_TIME 2000
+static bool bTogleScroll = false;
+static long long scrollTimer = SCROLL_TIME;
 #endif // DEBUG
 const float m_cfBatteryCutOffVoltage = 2.8f;//V
 const float m_cfBatteryDischargeVoltage = 4.1;
@@ -247,6 +252,8 @@ void setup()
 			pwmDriver[i].setPWM(ch, 0, PWM_OFF);
 		}
 	}
+
+	delay(2000);
 
 	int muxTEMPNum = 0;
 	int muxCH_TEMPNum = 0;
@@ -529,7 +536,7 @@ int PrioritySelect(int step, int nLast, bool bNoFilter = false)
 	int nCount = 0;
 	bool bFound = false;
 	EBatteryState searchState = EBatteryState::Finished;
-#ifdef DEBUG
+#ifdef DEBUG_SELECT
 	Serial.print("Entering Priority Selecttion loop");
 	Serial.println();
 #endif
@@ -558,7 +565,7 @@ int PrioritySelect(int step, int nLast, bool bNoFilter = false)
 		if (!bFound && nCount == BAT_COUNT && searchState > EBatteryState::Low)
 		{
 			searchState = (EBatteryState)((int)searchState - 1);
-#ifdef DEBUG
+#ifdef DEBUG_SELECT
 			Serial.print("Priority Selecttion loop: switch to ");
 			Serial.print((int)searchState);
 			Serial.print(" state");
@@ -572,7 +579,7 @@ int PrioritySelect(int step, int nLast, bool bNoFilter = false)
 	if (!bFound)
 		result = 0;
 
-#ifdef DEBUG
+#ifdef DEBUG_SELECT
 	Serial.print("Priority Selecttion loop: returning ");
 	Serial.print(result);
 	Serial.println();
@@ -957,7 +964,7 @@ void UpdateBatterie()
 #endif
 	for (int i = 0; i < BAT_COUNT; ++i)
 	{
-		batteries[i].voltageData.fValue = (batteries[i].thermalData.fValue < 0 && batteries[i].state != EBatteryState::Charging) ? 0.f : getVoltage(batteries[i].voltageData, voltageReadCalibration[i]);
+		batteries[i].voltageData.fValue = /*(batteries[i].thermalData.fValue < 0 && batteries[i].state != EBatteryState::Charging) ? 0.f :*/ getVoltage(batteries[i].voltageData, voltageReadCalibration[i]);
 #ifdef USE_SERIAL_INFO
 		Serial.print(batteries[i].voltageData.fValue, 4);
 		Serial.print(" V");
@@ -985,6 +992,13 @@ void UpdateBatterie()
 }
 void UpdateDisplay()
 {
+#ifndef DEBUG
+	if (bTogleScroll && !bLastInfoTrigered && scrollTimer <= millis())
+	{
+		scrollTimer = millis() + SCROLL_TIME;
+		lastScreen = PrioritySelect(1, lastScreen, nFinishedCount > 0);
+	}
+#endif
 	if (screenRefresh >= millis()) return;
 
 	if (/*lcdTimeOut > 0 &&*/ screenRefresh < millis())
@@ -1016,6 +1030,13 @@ void UpdateDisplay()
 		if (batteries[lastScreen].resistanceData.timer > millis() && batteries[lastScreen].resistanceData.timer - millis() > RESISTANCE_TIMER)
 		{
 			lcd.clear();
+#ifndef DEBUG
+			if (bTogleScroll)
+			{
+				lcd.setCursor(0, 0);
+				lcd.print("#");
+			}
+#endif
 			lcd.setCursor(3, 0);
 			lcd.print("Battery ");
 			lcd.setCursor(11, 0);
@@ -1030,6 +1051,13 @@ void UpdateDisplay()
 		case EBatteryState::Empty:
 		{
 			lcd.clear();
+#ifndef DEBUG
+			if (bTogleScroll)
+			{
+				lcd.setCursor(0, 0);
+				lcd.print("#");
+			}
+#endif
 			lcd.setCursor(3, 0);
 			lcd.print("Battery ");
 			lcd.setCursor(11, 0);
@@ -1041,6 +1069,13 @@ void UpdateDisplay()
 		case EBatteryState::Low:
 		{
 			lcd.clear();
+#ifndef DEBUG
+			if (bTogleScroll)
+			{
+				lcd.setCursor(0, 0);
+				lcd.print("#");
+			}
+#endif
 			lcd.setCursor(3, 0);
 			lcd.print("Battery ");
 			lcd.setCursor(11, 0);
@@ -1056,6 +1091,13 @@ void UpdateDisplay()
 		case EBatteryState::Charging:
 		{
 			lcd.clear();
+#ifndef DEBUG
+			if (bTogleScroll)
+			{
+				lcd.setCursor(0, 0);
+				lcd.print("#");
+			}
+#endif
 			lcd.setCursor(3, 0);
 			lcd.print("Battery ");
 			lcd.setCursor(11, 0);
@@ -1070,6 +1112,13 @@ void UpdateDisplay()
 		}case EBatteryState::Discharging:
 		{
 			lcd.clear();
+#ifndef DEBUG
+			if (bTogleScroll)
+			{
+				lcd.setCursor(0, 0);
+				lcd.print("#");
+			}
+#endif
 			lcd.setCursor(1, 0);
 			lcd.print("Bat-");
 			lcd.setCursor(5, 0);
@@ -1089,23 +1138,32 @@ void UpdateDisplay()
 			//lcd.setCursor(10, 1);
 			//lcd.write(0);
 			lcd.setCursor(12, 1);
-			if ((lcdTimeOut - LCD_TIMEOUT / 2) > millis())
+			// TODO: make autoswitch for C and A
+			if ((screenRefresh - LCD_REFRESH / 2) > millis())
+			{
+				lcd.print(batteries[lastScreen].loadData.fValue);// / RES_VALUE);
+				lcd.setCursor(15, 1);
+				lcd.print("A");
+				
+			}
+			else
 			{
 				lcd.print((int)batteries[lastScreen].thermalData.fValue);
 				lcd.setCursor(14, 1);
 				lcd.print("C");
 				//lcd.write(1);
 			}
-			else
-			{
-				lcd.print(batteries[lastScreen].loadData.fValue);// / RES_VALUE);
-				lcd.setCursor(15, 1);
-				lcd.print("A");
-			}
 			break;
 		}case EBatteryState::Recharging:
 		{
 			lcd.clear();
+#ifndef DEBUG
+			if (bTogleScroll)
+			{
+				lcd.setCursor(0, 0);
+				lcd.print("#");
+			}
+#endif
 			lcd.setCursor(3, 0);
 			lcd.print("Battery ");
 			lcd.setCursor(11, 0);
@@ -1120,6 +1178,13 @@ void UpdateDisplay()
 		}case EBatteryState::Finished:
 		{
 			lcd.clear();
+#ifndef DEBUG
+			if (bTogleScroll)
+			{
+				lcd.setCursor(0, 0);
+				lcd.print("#");
+			}
+#endif
 			lcd.setCursor(3, 0);
 			lcd.print("Batterie ");
 			lcd.setCursor(12, 0);
@@ -1362,7 +1427,15 @@ void UpdateInput()
 					bPWMTogle = false;
 				}
 			}
-
+#else
+			if (!bTogleScroll)
+			{
+				bTogleScroll = true;
+			}
+			else
+			{
+				bTogleScroll = false;
+			}
 #endif
 			break;
 		}
